@@ -2,6 +2,7 @@ pub mod app;
 pub mod input;
 pub mod mouse;
 pub mod screens;
+pub mod task;
 pub mod view;
 
 use std::io;

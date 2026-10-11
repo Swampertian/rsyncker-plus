@@ -140,6 +140,7 @@ fn footer_line(area: Rect, hits: &mut Hits) -> Line<'static> {
         ("e", "editar", Action::Edit),
         ("espaço", "ativar/desativar", Action::Toggle),
         ("r", "rodar agora", Action::RunNow),
+        ("d", "prévia", Action::Preview),
         ("x", "remover", Action::Remove),
         ("q", "sair", Action::Quit),
     ];

@@ -11,10 +11,12 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::daemon::systemd::{self, UnitStatus};
 use crate::job::Job;
 use crate::manage;
-use crate::paths::{Paths, shorten_home};
+use crate::paths::Paths;
 use crate::state::RunState;
 use crate::tui::mouse::{Hits, Target};
 use crate::tui::screens::job_form::{FormEvent, JobForm};
+use crate::tui::screens::preview::{self, Preview};
+use crate::tui::screens::run::{self, RunView};
 use crate::tui::screens::{confirm, dashboard, job_form};
 use crate::tui::view::Status;
 
@@ -31,6 +33,7 @@ pub enum Action {
     Toggle,
     Remove,
     RunNow,
+    Preview,
     Refresh,
 }
 
@@ -47,6 +50,7 @@ impl Action {
             KeyCode::Char(' ') => Action::Toggle,
             KeyCode::Char('x') | KeyCode::Delete => Action::Remove,
             KeyCode::Char('r') => Action::RunNow,
+            KeyCode::Char('d') => Action::Preview,
             KeyCode::F(5) => Action::Refresh,
             _ => return None,
         })
@@ -88,14 +92,15 @@ pub struct Message {
 #[derive(Debug, Clone)]
 pub enum Pending {
     Remove(String),
-    Save(Box<JobForm>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Screen {
     Dashboard,
     Form(Box<JobForm>),
     Confirm { title: String, message: String, pending: Pending },
+    Preview(Box<Preview>),
+    Run(Box<RunView>),
 }
 
 pub struct App {
@@ -137,6 +142,7 @@ impl App {
                     _ => {}
                 }
             }
+            self.tick();
             if self.last_refresh.elapsed() >= REFRESH_EVERY {
                 self.refresh();
             }
@@ -154,6 +160,36 @@ impl App {
             Screen::Dashboard => {}
             Screen::Form(form) => job_form::render(frame, form, &mut self.hits),
             Screen::Confirm { title, message, .. } => confirm::render(frame, title, message, &mut self.hits),
+            Screen::Preview(preview) => preview::render(frame, preview, &mut self.hits),
+            Screen::Run(view) => run::render(frame, view, &mut self.hits),
+        }
+    }
+
+    pub fn tick(&mut self) {
+        match &mut self.screen {
+            Screen::Preview(preview) => {
+                preview.update();
+                if preview.save.is_some() && matches!(preview.result, Some(Err(_))) {
+                    self.back_to_form_with_error();
+                }
+            }
+            Screen::Run(view) => {
+                if view.update() {
+                    self.refresh();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn back_to_form_with_error(&mut self) {
+        let Screen::Preview(preview) = mem::replace(&mut self.screen, Screen::Dashboard) else {
+            return;
+        };
+        let error = preview.error();
+        if let Some(mut form) = preview.save {
+            form.error = error;
+            self.screen = Screen::Form(form);
         }
     }
 
@@ -193,14 +229,63 @@ impl App {
             }
             Screen::Form(form) => match form.on_key(key) {
                 FormEvent::None => {}
-                FormEvent::Cancel => self.screen = Screen::Dashboard,
+                FormEvent::Cancel => self.back(),
                 FormEvent::Submit => self.submit_form(),
             },
             Screen::Confirm { .. } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('s') => self.confirm(),
-                KeyCode::Char('n') | KeyCode::Esc => self.cancel_confirm(),
+                KeyCode::Char('y') | KeyCode::Char('s') => self.yes(),
+                KeyCode::Char('n') | KeyCode::Esc => self.back(),
                 _ => {}
             },
+            Screen::Preview(preview) => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => preview.scroll_by(-1),
+                KeyCode::Down | KeyCode::Char('j') => preview.scroll_by(1),
+                KeyCode::PageUp => preview.scroll_by(-10),
+                KeyCode::PageDown => preview.scroll_by(10),
+                KeyCode::Char('y') | KeyCode::Char('s') => self.yes(),
+                KeyCode::Char('n') | KeyCode::Char('q') | KeyCode::Esc => self.back(),
+                _ => {}
+            },
+            Screen::Run(_) => {
+                let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+                if ctrl_c || matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                    self.back();
+                }
+            }
+        }
+    }
+
+    fn yes(&mut self) {
+        match &self.screen {
+            Screen::Confirm { .. } => self.confirm(),
+            Screen::Preview(preview) if preview.can_save() => {
+                let Screen::Preview(preview) = mem::replace(&mut self.screen, Screen::Dashboard) else {
+                    return;
+                };
+                if let Some(form) = preview.save {
+                    match form.to_job() {
+                        Ok(job) => self.save(form, job),
+                        Err(error) => self.error(format!("{error:#}")),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn back(&mut self) {
+        match mem::replace(&mut self.screen, Screen::Dashboard) {
+            Screen::Preview(mut preview) => {
+                preview.cancel();
+                if let Some(form) = preview.save {
+                    self.screen = Screen::Form(form);
+                }
+            }
+            Screen::Run(mut view) if view.is_running() => {
+                view.cancel();
+                self.screen = Screen::Run(view);
+            }
+            _ => {}
         }
     }
 
@@ -222,7 +307,8 @@ impl App {
             Screen::Dashboard if delta < 0 => self.dispatch(Action::Up),
             Screen::Dashboard => self.dispatch(Action::Down),
             Screen::Form(form) => form.move_focus(delta),
-            Screen::Confirm { .. } => {}
+            Screen::Preview(preview) => preview.scroll_by(delta * 3),
+            Screen::Confirm { .. } | Screen::Run(_) => {}
         }
     }
 
@@ -246,9 +332,8 @@ impl App {
                 }
             }
             Target::Submit => self.submit_form(),
-            Target::Cancel => self.screen = Screen::Dashboard,
-            Target::Confirm => self.confirm(),
-            Target::Reject => self.cancel_confirm(),
+            Target::Cancel | Target::Reject => self.back(),
+            Target::Confirm => self.yes(),
         }
     }
 
@@ -292,12 +377,13 @@ impl App {
                 }
             }
             Action::RunNow => {
-                if let Some(job) = self.selected_job().cloned() {
-                    match systemd::start(&job.name) {
-                        Ok(()) => self.info(format!("'{}' iniciado em segundo plano", job.name)),
-                        Err(error) => self.error(format!("{error:#}")),
-                    }
-                    self.refresh();
+                if let Some(job) = self.selected_job() {
+                    self.screen = Screen::Run(Box::new(RunView::start(&self.paths, &job.name)));
+                }
+            }
+            Action::Preview => {
+                if let Some(job) = self.selected_job() {
+                    self.screen = Screen::Preview(Box::new(Preview::start(job, None)));
                 }
             }
         }
@@ -315,17 +401,8 @@ impl App {
                 return;
             }
         };
-        if form.turns_into_mirror() {
-            self.screen = Screen::Confirm {
-                title: "Modo espelho".to_string(),
-                message: format!(
-                    "'{}' vai APAGAR no destino tudo que não existir na origem.\n\nOrigem:  {}\nDestino: {}\n\nContinuar?",
-                    job.name,
-                    shorten_home(&job.source),
-                    shorten_home(&job.destination)
-                ),
-                pending: Pending::Save(form),
-            };
+        if form.is_new() || form.turns_into_mirror() {
+            self.screen = Screen::Preview(Box::new(Preview::start(&job, Some(form))));
             return;
         }
         self.save(form, job);
@@ -353,28 +430,12 @@ impl App {
         let Screen::Confirm { pending, .. } = mem::replace(&mut self.screen, Screen::Dashboard) else {
             return;
         };
-        match pending {
-            Pending::Remove(name) => {
-                match manage::remove(&self.paths, &name) {
-                    Ok(()) => self.info(format!("job '{name}' removido")),
-                    Err(error) => self.error(format!("{error:#}")),
-                }
-                self.refresh();
-            }
-            Pending::Save(form) => match form.to_job() {
-                Ok(job) => self.save(form, job),
-                Err(error) => self.error(format!("{error:#}")),
-            },
+        let Pending::Remove(name) = pending;
+        match manage::remove(&self.paths, &name) {
+            Ok(()) => self.info(format!("job '{name}' removido")),
+            Err(error) => self.error(format!("{error:#}")),
         }
-    }
-
-    fn cancel_confirm(&mut self) {
-        let Screen::Confirm { pending, .. } = mem::replace(&mut self.screen, Screen::Dashboard) else {
-            return;
-        };
-        if let Pending::Save(form) = pending {
-            self.screen = Screen::Form(form);
-        }
+        self.refresh();
     }
 
     fn info(&mut self, text: String) {

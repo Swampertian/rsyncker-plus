@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::ErrorKind;
 
@@ -6,10 +7,19 @@ use fs2::FileExt;
 
 use crate::job::{Job, validate_name};
 use crate::paths::Paths;
-use crate::rsync::{self, Options};
+use crate::rsync::{self, Options, Output};
 use crate::state::{self, Outcome, RunState};
 
 pub fn run(paths: &Paths, name: &str) -> Result<RunState> {
+    run_with(paths, name, Options::default(), |args| {
+        let output = rsync::execute(args)?;
+        print!("{}", output.stdout);
+        eprint!("{}", output.stderr);
+        Ok(output)
+    })
+}
+
+pub fn run_with(paths: &Paths, name: &str, opts: Options, execute: impl FnOnce(&[OsString]) -> Result<Output>) -> Result<RunState> {
     let _lock = acquire_lock(paths, name)?;
     let mut job = Job::load(&paths.jobs, name)?;
     job.validate()?;
@@ -26,27 +36,26 @@ pub fn run(paths: &Paths, name: &str) -> Result<RunState> {
             bytes_transferred: 0,
             message: Some(err.to_string()),
         },
-        Ok(()) => {
-            let output = rsync::execute(&rsync::build_args(&job, Options::default()))?;
-            print!("{}", output.stdout);
-            eprint!("{}", output.stderr);
-            let stats = rsync::parse_stats(&output.stdout);
-            let outcome = rsync::outcome(output.exit_code);
-            RunState {
-                started_at,
-                finished_at: state::now(),
-                exit_code: output.exit_code,
-                outcome,
-                files_transferred: stats.files_transferred,
-                files_deleted: stats.files_deleted,
-                bytes_transferred: stats.bytes_transferred,
-                message: (outcome != Outcome::Success).then(|| output.stderr.lines().last().unwrap_or_default().to_string()),
-            }
-        }
+        Ok(()) => finish(started_at, &execute(&rsync::build_args(&job, opts))?),
     };
 
     state.save(&paths.state, name)?;
     Ok(state)
+}
+
+pub fn finish(started_at: u64, output: &Output) -> RunState {
+    let stats = rsync::parse_stats(&output.stdout);
+    let outcome = rsync::outcome(output.exit_code);
+    RunState {
+        started_at,
+        finished_at: state::now(),
+        exit_code: output.exit_code,
+        outcome,
+        files_transferred: stats.files_transferred,
+        files_deleted: stats.files_deleted,
+        bytes_transferred: stats.bytes_transferred,
+        message: (outcome != Outcome::Success).then(|| output.stderr.lines().last().unwrap_or_default().to_string()),
+    }
 }
 
 pub fn acquire_lock(paths: &Paths, name: &str) -> Result<File> {
@@ -62,7 +71,7 @@ pub fn acquire_lock(paths: &Paths, name: &str) -> Result<File> {
     Ok(lock)
 }
 
-fn preflight(job: &mut Job) -> Result<()> {
+pub fn preflight(job: &mut Job) -> Result<()> {
     if !job.source.is_dir() {
         bail!("origem não existe: {}", job.source.display());
     }
