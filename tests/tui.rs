@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -383,4 +385,102 @@ fn hit_areas_cover_their_labels() {
     assert_eq!(text_at(Target::Action(Action::Toggle)), "espaço ativar/desativar");
     assert_eq!(text_at(Target::Action(Action::Quit)), "q sair");
     assert!(text_at(Target::Row(0)).contains("fotos-teste"));
+}
+
+fn wait_until(app: &mut App, done: impl Fn(&App) -> bool) {
+    let start = Instant::now();
+    while !done(app) {
+        assert!(start.elapsed() < Duration::from_secs(10), "tarefa não terminou a tempo");
+        thread::sleep(Duration::from_millis(10));
+        app.tick();
+    }
+}
+
+fn preview_done(app: &App) -> bool {
+    !matches!(&app.screen, Screen::Preview(p) if !p.is_done())
+}
+
+fn run_done(app: &App) -> bool {
+    !matches!(&app.screen, Screen::Run(view) if view.is_running())
+}
+
+fn fill_new_job(app: &mut App, root: &std::path::Path, destination: &str) {
+    app.on_key(key(KeyCode::Char('n')));
+    let Screen::Form(form) = &mut app.screen else { panic!() };
+    type_text(form, &root.join("src").to_string_lossy());
+    focus(form, Field::Name);
+    while !form.name.value().is_empty() {
+        form.on_key(key(KeyCode::Backspace));
+    }
+    type_text(form, "novo");
+    focus(form, Field::Destination);
+    type_text(form, &root.join(destination).to_string_lossy());
+    form.schedule = Schedule::None;
+}
+
+#[test]
+fn preview_lists_pending_changes() {
+    let (root, mut app) = app_with_job();
+    fs::write(root.path().join("src/a.txt"), "oi").unwrap();
+    app.on_key(key(KeyCode::Char('d')));
+    wait_until(&mut app, preview_done);
+
+    let Screen::Preview(preview) = &app.screen else { panic!("prévia deveria estar aberta") };
+    assert_eq!(preview.count(rsync_tui::rsync::Change::Created), 1);
+    assert!(!preview.can_save());
+    assert!(!root.path().join("dst/a.txt").exists());
+    assert!(screen_text(&mut app).contains("1 novo(s)"));
+
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.screen, Screen::Dashboard));
+}
+
+#[test]
+fn new_job_requires_preview_before_saving() {
+    let (root, mut app) = app_with_job();
+    fill_new_job(&mut app, root.path(), "dst");
+    app.on_key(ctrl('s'));
+    assert!(matches!(app.screen, Screen::Preview(_)));
+    wait_until(&mut app, preview_done);
+
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.screen, Screen::Form(_)));
+    assert_eq!(app.rows.len(), 1);
+
+    app.on_key(ctrl('s'));
+    wait_until(&mut app, preview_done);
+    app.on_key(key(KeyCode::Char('y')));
+    if let Screen::Form(form) = &app.screen {
+        panic!("save falhou: {:?}", form.error);
+    }
+    assert!(matches!(app.screen, Screen::Dashboard), "{:?}", app.screen);
+    assert!(app.rows.iter().any(|r| r.job.name == "novo"));
+}
+
+#[test]
+fn preview_error_returns_to_form() {
+    let (root, mut app) = app_with_job();
+    fill_new_job(&mut app, root.path(), "nao-existe");
+    app.on_key(ctrl('s'));
+    wait_until(&mut app, |app| !matches!(app.screen, Screen::Preview(_)));
+
+    let Screen::Form(form) = &app.screen else { panic!("deveria voltar ao formulário") };
+    assert!(form.error.as_deref().unwrap_or_default().contains("destino não existe"));
+}
+
+#[test]
+fn run_copies_and_records_state() {
+    let (root, mut app) = app_with_job();
+    fs::write(root.path().join("src/a.txt"), "oi").unwrap();
+    app.on_key(key(KeyCode::Char('r')));
+    assert!(matches!(app.screen, Screen::Run(_)));
+    wait_until(&mut app, run_done);
+
+    assert_eq!(fs::read_to_string(root.path().join("dst/a.txt")).unwrap(), "oi");
+    assert!(screen_text(&mut app).contains("concluído"));
+    let last = app.rows[0].last_run.as_ref().expect("estado deveria ser gravado");
+    assert_eq!(last.files_transferred, 1);
+
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.screen, Screen::Dashboard));
 }
