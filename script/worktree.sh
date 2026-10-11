@@ -40,7 +40,7 @@ case "$command" in
         fi
         agent=$2
         task=$3
-        branch="agent/$agent/$task"
+        branch="feat/$task"
         path=".worktrees/$agent-$task"
         if [ "$command" = create ]; then
             mkdir -p .worktrees

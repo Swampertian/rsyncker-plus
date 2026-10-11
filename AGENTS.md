@@ -4,7 +4,7 @@
 
 - Use one Git worktree and one branch per task. Create them with
   `script/worktree.sh create <agent> <task>`; branches use
-  `agent/<agent>/<task>` and worktrees live under `.worktrees/`.
+  `feat/<task>` and worktrees live under `.worktrees/<agent>-<task>/`.
 - Agents work only on their task branches. After committing the finished task
   and passing checks, the coordinator integrates it with
   `script/worktree.sh integrate <agent> <task>` from the integration checkout.
