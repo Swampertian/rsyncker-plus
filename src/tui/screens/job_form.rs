@@ -9,7 +9,8 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use crate::job::{self, Job, Mode, Schedule};
 use crate::paths::expand_home;
 use crate::tui::input::TextInput;
-use crate::tui::view::{centered, mode_label, schedule_label};
+use crate::tui::mouse::{Hits, Target};
+use crate::tui::view::{centered, key_hints, mode_label, schedule_label};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
@@ -100,7 +101,17 @@ impl JobForm {
         FormEvent::None
     }
 
-    fn move_focus(&mut self, delta: isize) {
+    pub fn click(&mut self, index: usize) {
+        if index >= FIELDS.len() {
+            return;
+        }
+        if self.focus == index && matches!(self.focused(), Field::Mode | Field::Schedule) {
+            self.edit_field(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        }
+        self.focus = index;
+    }
+
+    pub fn move_focus(&mut self, delta: isize) {
         let len = FIELDS.len() as isize;
         self.focus = (self.focus as isize + delta).rem_euclid(len) as usize;
     }
@@ -182,7 +193,7 @@ impl Default for JobForm {
 
 const LABEL_WIDTH: u16 = 14;
 
-pub fn render(frame: &mut Frame, form: &JobForm) {
+pub fn render(frame: &mut Frame, form: &JobForm, hits: &mut Hits) {
     let area = centered(frame.area(), 76, 19);
     let title = if form.is_new() { " Novo job " } else { " Editar job " };
     let block = Block::bordered().title(title).border_style(Style::new().fg(Color::Cyan));
@@ -212,6 +223,7 @@ pub fn render(frame: &mut Frame, form: &JobForm) {
                 Span::styled(visible, style)
             }
         };
+        hits.add(Rect { y: inner.y + lines.len() as u16, height: 1, ..inner }, Target::Field(i));
         lines.push(Line::from(vec![label, " ".into(), value]));
         if let Some(hint) = hint_of(*field) {
             lines.push(Line::from(format!("{:width$} {hint}", "", width = LABEL_WIDTH as usize)).dark_gray());
@@ -228,20 +240,9 @@ pub fn render(frame: &mut Frame, form: &JobForm) {
 
     let help_area = Rect { y: inner.y + inner.height.saturating_sub(1), height: 1, ..inner };
     frame.render_widget(Paragraph::new(lines), inner);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            "Tab/↑↓".bold(),
-            " campos  ".into(),
-            "←→/espaço".bold(),
-            " opções  ".into(),
-            "Ctrl+S".bold(),
-            " salvar  ".into(),
-            "Esc".bold(),
-            " cancelar".into(),
-        ]))
-        .dark_gray(),
-        help_area,
-    );
+    let items =
+        [("Tab/↑↓", "campos", None), ("←→/espaço", "opções", None), ("Ctrl+S", "salvar", Some(Target::Submit)), ("Esc", "cancelar", Some(Target::Cancel))];
+    frame.render_widget(key_hints(help_area, &items, hits), help_area);
     if let Some(position) = cursor {
         frame.set_cursor_position(position);
     }

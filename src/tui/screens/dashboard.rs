@@ -6,10 +6,11 @@ use ratatui::widgets::{Block, Cell, Paragraph, Row as TableRow, Table, TableStat
 
 use crate::paths::shorten_home;
 use crate::state;
-use crate::tui::app::{Level, Message, Row};
-use crate::tui::view::{format_bytes, mode_label, schedule_label, short_next_run, status_label};
+use crate::tui::app::{Action, Level, Message, Row};
+use crate::tui::mouse::{Hits, Target};
+use crate::tui::view::{format_bytes, key_hints, mode_label, schedule_label, short_next_run, status_label};
 
-pub fn render(frame: &mut Frame, rows: &[Row], table: &mut TableState, message: Option<&Message>) {
+pub fn render(frame: &mut Frame, rows: &[Row], table: &mut TableState, message: Option<&Message>, hits: &mut Hits) {
     let [header, body, details, status, footer] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(5), Constraint::Length(6), Constraint::Length(1), Constraint::Length(1)]).areas(frame.area());
 
@@ -19,6 +20,7 @@ pub fn render(frame: &mut Frame, rows: &[Row], table: &mut TableState, message: 
         render_empty(frame, body);
     } else {
         render_table(frame, body, rows, table);
+        add_row_hits(hits, body, rows.len(), table.offset());
     }
 
     let selected = table.selected().and_then(|i| rows.get(i));
@@ -32,14 +34,26 @@ pub fn render(frame: &mut Frame, rows: &[Row], table: &mut TableState, message: 
         frame.render_widget(Line::styled(format!(" {}", message.text), style), status);
     }
 
-    frame.render_widget(footer_line(), footer);
+    frame.render_widget(footer_line(footer, hits), footer);
+}
+
+fn add_row_hits(hits: &mut Hits, body: Rect, count: usize, offset: usize) {
+    let visible = body.height.saturating_sub(3);
+    for line in 0..visible {
+        let index = offset + line as usize;
+        if index >= count {
+            break;
+        }
+        let area = Rect { x: body.x + 1, y: body.y + 2 + line, width: body.width.saturating_sub(2), height: 1 };
+        hits.add(area, Target::Row(index));
+    }
 }
 
 fn render_empty(frame: &mut Frame, area: Rect) {
     let text = vec![
         Line::default(),
-        Line::from("Nenhum job configurado.").bold(),
-        Line::from(vec!["Pressione ".into(), "n".bold().cyan(), " para criar o primeiro.".into()]),
+        Line::from("Nenhum diretório configurado.").bold(),
+        Line::from(vec!["Pressione ".into(), "n".bold().cyan(), " para criar a primeira sincronização.".into()]),
     ];
     frame.render_widget(Paragraph::new(text).centered().block(Block::bordered().title(" Jobs ")), area);
 }
@@ -120,12 +134,15 @@ fn render_details(frame: &mut Frame, area: Rect, row: Option<&Row>) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn footer_line() -> Line<'static> {
-    let keys = [("n", "novo"), ("e", "editar"), ("espaço", "ativar/desativar"), ("r", "rodar agora"), ("x", "remover"), ("q", "sair")];
-    let mut spans = vec![" ".into()];
-    for (key, action) in keys {
-        spans.push(key.bold().cyan());
-        spans.push(format!(" {action}   ").dark_gray());
-    }
-    Line::from(spans)
+fn footer_line(area: Rect, hits: &mut Hits) -> Line<'static> {
+    let keys = [
+        ("n", "novo", Action::New),
+        ("e", "editar", Action::Edit),
+        ("espaço", "ativar/desativar", Action::Toggle),
+        ("r", "rodar agora", Action::RunNow),
+        ("x", "remover", Action::Remove),
+        ("q", "sair", Action::Quit),
+    ];
+    let items: Vec<_> = keys.iter().map(|(key, label, action)| (*key, *label, Some(Target::Action(*action)))).collect();
+    key_hints(area, &items, hits)
 }
