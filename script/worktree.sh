@@ -51,10 +51,7 @@ case "$command" in
                 printf 'Erro: execute a integração no checkout da branch %s.\n' "$integration_branch" >&2
                 exit 1
             fi
-            if [ -n "$(git status --porcelain)" ]; then
-                printf '%s\n' 'Erro: o checkout de integração precisa estar limpo.' >&2
-                exit 1
-            fi
+            integration_status=$(git status --porcelain)
             if [ "$(git -C "$path" branch --show-current)" != "$branch" ]; then
                 printf 'Erro: worktree ausente ou não está na branch %s.\n' "$branch" >&2
                 exit 1
@@ -81,7 +78,7 @@ case "$command" in
                 cd "$path"
                 CARGO_TARGET_DIR="target/agent-$agent" script/check.sh
             )
-            if [ -n "$(git status --porcelain)" ]; then
+            if [ "$(git status --porcelain)" != "$integration_status" ]; then
                 printf '%s\n' 'Erro: o checkout de integração mudou durante as verificações.' >&2
                 exit 1
             fi

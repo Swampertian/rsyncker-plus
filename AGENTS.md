@@ -7,10 +7,11 @@
   `agent/<agent>/<task>` and worktrees live under `.worktrees/`.
 - Agents work only on their task branches. After committing the finished task
   and passing checks, the coordinator integrates it with
-  `script/worktree.sh integrate <agent> <task>` from the clean integration
-  checkout. This runs `script/check.sh`, merges the branch, and removes its
-  worktree and branch on success. Do not merge or modify the integration
-  branch directly.
+  `script/worktree.sh integrate <agent> <task>` from the integration checkout.
+  This runs `script/check.sh`, merges the branch, and removes its worktree and
+  branch on success. Git rejects overlapping local edits; unrelated edits in
+  the integration checkout are preserved. Do not merge or modify the
+  integration branch directly.
 - Edit only files assigned to your task. Re-read shared files and files with
   active edits before making small, localized changes.
 - If another agent's in-progress change breaks the build, wait and retry; do not
