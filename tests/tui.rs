@@ -3,12 +3,13 @@ use std::path::PathBuf;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use rsync_tui::job::{Job, Mode, Schedule};
 use rsync_tui::paths::Paths;
 use rsync_tui::tui::app::{Action, App, Screen};
 use rsync_tui::tui::input::TextInput;
-use rsync_tui::tui::screens::job_form::{Field, FormEvent, JobForm};
+use rsync_tui::tui::mouse::{Hits, Target};
+use rsync_tui::tui::screens::job_form::{FIELDS, Field, FormEvent, JobForm};
 use rsync_tui::tui::view;
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -257,7 +258,129 @@ fn quit_key_stops_app() {
 fn confirm_popup_keeps_keys_visible_with_long_text() {
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     let long = format!("Origem: /{}\nDestino: /{}", "a".repeat(150), "b".repeat(150));
-    terminal.draw(|frame| rsync_tui::tui::screens::confirm::render(frame, "Teste", &long)).unwrap();
+    terminal.draw(|frame| rsync_tui::tui::screens::confirm::render(frame, "Teste", &long, &mut Hits::default())).unwrap();
     let text: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
     assert!(text.contains("y confirmar"));
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE }
+}
+
+fn click_on(app: &mut App, target: Target) {
+    screen_text(app);
+    let area = app.hits.area_of(target).expect("alvo deveria estar na tela");
+    app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), area.x, area.y));
+}
+
+fn scroll(app: &mut App, kind: MouseEventKind) {
+    screen_text(app);
+    app.on_mouse(mouse(kind, 0, 0));
+}
+
+#[test]
+fn clicking_footer_runs_action() {
+    let (_root, mut app) = app_with_job();
+    click_on(&mut app, Target::Action(Action::New));
+    assert!(matches!(app.screen, Screen::Form(_)));
+}
+
+#[test]
+fn clicking_row_selects_then_edits() {
+    let (root, mut app) = app_with_job();
+    let dst = root.path().join("dst");
+    Job::new("outro", root.path().join("src"), dst, Mode::Copy).save(&Paths::under(root.path()).jobs).unwrap();
+    app.refresh();
+    assert_eq!(app.rows.len(), 2);
+
+    click_on(&mut app, Target::Row(1));
+    assert_eq!(app.table.selected(), Some(1));
+    assert!(matches!(app.screen, Screen::Dashboard));
+
+    click_on(&mut app, Target::Row(1));
+    let Screen::Form(form) = &app.screen else {
+        panic!("segundo clique deveria abrir o editor");
+    };
+    assert_eq!(form.name.value(), app.rows[1].job.name);
+}
+
+#[test]
+fn scroll_moves_selection() {
+    let (root, mut app) = app_with_job();
+    Job::new("outro", root.path().join("src"), root.path().join("dst"), Mode::Copy).save(&Paths::under(root.path()).jobs).unwrap();
+    app.refresh();
+    scroll(&mut app, MouseEventKind::ScrollDown);
+    assert_eq!(app.table.selected(), Some(1));
+    scroll(&mut app, MouseEventKind::ScrollUp);
+    assert_eq!(app.table.selected(), Some(0));
+}
+
+#[test]
+fn clicking_form_fields_focuses_and_cycles_choices() {
+    let (_root, mut app) = app_with_job();
+    app.on_key(key(KeyCode::Char('n')));
+    let mode = FIELDS.iter().position(|f| *f == Field::Mode).unwrap();
+
+    click_on(&mut app, Target::Field(mode));
+    let Screen::Form(form) = &app.screen else { panic!() };
+    assert_eq!(form.focused(), Field::Mode);
+    assert_eq!(form.mode, Mode::Copy);
+
+    click_on(&mut app, Target::Field(mode));
+    let Screen::Form(form) = &app.screen else { panic!() };
+    assert_eq!(form.mode, Mode::Mirror);
+
+    scroll(&mut app, MouseEventKind::ScrollDown);
+    let Screen::Form(form) = &app.screen else { panic!() };
+    assert_eq!(form.focused(), Field::Schedule);
+
+    click_on(&mut app, Target::Cancel);
+    assert!(matches!(app.screen, Screen::Dashboard));
+}
+
+#[test]
+fn form_blocks_clicks_on_dashboard() {
+    let (_root, mut app) = app_with_job();
+    app.on_key(key(KeyCode::Char('n')));
+    screen_text(&mut app);
+    assert!(app.hits.area_of(Target::Row(0)).is_none());
+    assert!(app.hits.area_of(Target::Action(Action::Quit)).is_none());
+}
+
+#[test]
+fn clicking_submit_validates_form() {
+    let (_root, mut app) = app_with_job();
+    app.on_key(key(KeyCode::Char('n')));
+    click_on(&mut app, Target::Submit);
+    let Screen::Form(form) = &app.screen else { panic!() };
+    assert_eq!(form.error.as_deref(), Some("informe a origem"));
+}
+
+#[test]
+fn confirm_buttons_respond_to_clicks() {
+    let (_root, mut app) = app_with_job();
+    app.on_key(key(KeyCode::Char('x')));
+    click_on(&mut app, Target::Reject);
+    assert!(matches!(app.screen, Screen::Dashboard));
+    assert_eq!(app.rows.len(), 1);
+
+    app.on_key(key(KeyCode::Char('x')));
+    click_on(&mut app, Target::Confirm);
+    assert!(app.rows.is_empty());
+}
+
+#[test]
+fn hit_areas_cover_their_labels() {
+    let (_root, mut app) = app_with_job();
+    let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+    terminal.draw(|frame| app.render(frame)).unwrap();
+    let text_at = |target: Target| {
+        let area = app.hits.area_of(target).unwrap();
+        let buffer = terminal.backend().buffer();
+        (area.x..area.x + area.width).map(|x| buffer[(x, area.y)].symbol().to_string()).collect::<String>()
+    };
+    assert_eq!(text_at(Target::Action(Action::New)), "n novo");
+    assert_eq!(text_at(Target::Action(Action::Toggle)), "espaço ativar/desativar");
+    assert_eq!(text_at(Target::Action(Action::Quit)), "q sair");
+    assert!(text_at(Target::Row(0)).contains("fotos-teste"));
 }

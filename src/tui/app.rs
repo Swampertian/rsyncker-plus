@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::widgets::TableState;
 use ratatui::{DefaultTerminal, Frame};
 
@@ -13,6 +13,7 @@ use crate::job::Job;
 use crate::manage;
 use crate::paths::{Paths, shorten_home};
 use crate::state::RunState;
+use crate::tui::mouse::{Hits, Target};
 use crate::tui::screens::job_form::{FormEvent, JobForm};
 use crate::tui::screens::{confirm, dashboard, job_form};
 use crate::tui::view::Status;
@@ -105,6 +106,7 @@ pub struct App {
     pub table: TableState,
     pub message: Option<Message>,
     pub quit: bool,
+    pub hits: Hits,
     last_refresh: Instant,
 }
 
@@ -118,6 +120,7 @@ impl App {
             table: TableState::default(),
             message: None,
             quit: false,
+            hits: Hits::default(),
             last_refresh: Instant::now(),
         };
         app.refresh();
@@ -128,10 +131,10 @@ impl App {
         while !self.quit {
             terminal.draw(|frame| self.render(frame))?;
             if event::poll(POLL)? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        self.on_key(key);
-                    }
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key),
+                    Event::Mouse(mouse) => self.on_mouse(mouse),
+                    _ => {}
                 }
             }
             if self.last_refresh.elapsed() >= REFRESH_EVERY {
@@ -142,11 +145,15 @@ impl App {
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
-        dashboard::render(frame, &self.rows, &mut self.table, self.message.as_ref());
+        self.hits.clear();
+        dashboard::render(frame, &self.rows, &mut self.table, self.message.as_ref(), &mut self.hits);
+        if !matches!(self.screen, Screen::Dashboard) {
+            self.hits.clear();
+        }
         match &self.screen {
             Screen::Dashboard => {}
-            Screen::Form(form) => job_form::render(frame, form),
-            Screen::Confirm { title, message, .. } => confirm::render(frame, title, message),
+            Screen::Form(form) => job_form::render(frame, form, &mut self.hits),
+            Screen::Confirm { title, message, .. } => confirm::render(frame, title, message, &mut self.hits),
         }
     }
 
@@ -194,6 +201,54 @@ impl App {
                 KeyCode::Char('n') | KeyCode::Esc => self.cancel_confirm(),
                 _ => {}
             },
+        }
+    }
+
+    pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.scroll(-1),
+            MouseEventKind::ScrollDown => self.scroll(1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(target) = self.hits.at(mouse.column, mouse.row) {
+                    self.click(target);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn scroll(&mut self, delta: isize) {
+        match &mut self.screen {
+            Screen::Dashboard if delta < 0 => self.dispatch(Action::Up),
+            Screen::Dashboard => self.dispatch(Action::Down),
+            Screen::Form(form) => form.move_focus(delta),
+            Screen::Confirm { .. } => {}
+        }
+    }
+
+    pub fn click(&mut self, target: Target) {
+        match target {
+            Target::Row(i) => {
+                self.message = None;
+                if self.table.selected() == Some(i) {
+                    self.dispatch(Action::Edit);
+                } else {
+                    self.table.select(Some(i));
+                }
+            }
+            Target::Action(action) => {
+                self.message = None;
+                self.dispatch(action);
+            }
+            Target::Field(i) => {
+                if let Screen::Form(form) = &mut self.screen {
+                    form.click(i);
+                }
+            }
+            Target::Submit => self.submit_form(),
+            Target::Cancel => self.screen = Screen::Dashboard,
+            Target::Confirm => self.confirm(),
+            Target::Reject => self.cancel_confirm(),
         }
     }
 

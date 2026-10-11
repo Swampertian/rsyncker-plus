@@ -1,8 +1,10 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
 
 use crate::job::{Mode, Schedule};
 use crate::state::Outcome;
+use crate::tui::mouse::{Hits, Target};
 
 pub fn mode_label(mode: Mode) -> &'static str {
     match mode {
@@ -62,4 +64,21 @@ pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
+}
+
+pub fn key_hints(area: Rect, items: &[(&str, &str, Option<Target>)], hits: &mut Hits) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = vec![" ".into()];
+    let mut x = area.x + 1;
+    for (key, label, target) in items {
+        let key = key.to_string().bold().cyan();
+        let label = format!(" {label}").dark_gray();
+        let width = (key.width() + label.width()) as u16;
+        if let Some(target) = target {
+            let visible = width.min((area.x + area.width).saturating_sub(x));
+            hits.add(Rect { x, y: area.y, width: visible, height: 1 }, *target);
+        }
+        x = x.saturating_add(width + 3);
+        spans.extend([key, label, "   ".into()]);
+    }
+    Line::from(spans)
 }
