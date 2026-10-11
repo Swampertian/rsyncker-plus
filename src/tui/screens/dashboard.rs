@@ -52,8 +52,8 @@ fn add_row_hits(hits: &mut Hits, body: Rect, count: usize, offset: usize) {
 fn render_empty(frame: &mut Frame, area: Rect) {
     let text = vec![
         Line::default(),
-        Line::from("Nenhum job configurado.").bold(),
-        Line::from(vec!["Pressione ".into(), "n".bold().cyan(), " para criar o primeiro.".into()]),
+        Line::from("Nenhum diretório configurado.").bold(),
+        Line::from(vec!["Pressione ".into(), "n".bold().cyan(), " para criar a primeira sincronização.".into()]),
     ];
     frame.render_widget(Paragraph::new(text).centered().block(Block::bordered().title(" Jobs ")), area);
 }

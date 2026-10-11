@@ -213,7 +213,7 @@ fn dashboard_lists_jobs() {
 fn empty_dashboard_shows_hint() {
     let root = tempfile::tempdir().unwrap();
     let mut app = App::new(Paths::under(root.path()), PathBuf::from("/bin/true"));
-    assert!(screen_text(&mut app).contains("Nenhum job configurado"));
+    assert!(screen_text(&mut app).contains("Nenhum diretório configurado"));
 }
 
 #[test]
