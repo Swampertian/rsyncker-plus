@@ -5,8 +5,13 @@
 - Use one Git worktree and one branch per task. Create them with
   `script/worktree.sh create <agent> <task>`; branches use
   `agent/<agent>/<task>` and worktrees live under `.worktrees/`.
-- Integration is manual. Do not merge or modify the integration branch without
-  an explicit request from the coordinator.
+- Agents work only on their task branches. After committing the finished task
+  and passing checks, the coordinator integrates it with
+  `script/worktree.sh integrate <agent> <task>` from the integration checkout.
+  This runs `script/check.sh`, merges the branch, and removes its worktree and
+  branch on success. Git rejects overlapping local edits; unrelated edits in
+  the integration checkout are preserved. Do not merge or modify the
+  integration branch directly.
 - Edit only files assigned to your task. Re-read shared files and files with
   active edits before making small, localized changes.
 - If another agent's in-progress change breaks the build, wait and retry; do not
@@ -23,8 +28,9 @@
   `script/worktree.sh remove <agent> <task>` when finished; this also removes
   its local build artifacts. Never remove a target directory belonging to an
   active agent.
-- Do not commit or merge unless explicitly requested. On completion, report the
-  branch, changed files, checks run, and any conflicts.
+- Commit completed work only to the task branch when requested by the
+  coordinator; never commit directly to the integration branch. On completion,
+  report the branch, changed files, checks run, and any conflicts.
 
 ## Rust and Cargo
 
