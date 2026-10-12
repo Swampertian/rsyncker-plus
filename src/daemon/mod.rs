@@ -1,3 +1,3 @@
 pub mod runner;
 pub mod systemd;
-mod watch;
+pub mod watch;

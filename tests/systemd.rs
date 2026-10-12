@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use rsync_tui::daemon::systemd;
@@ -64,6 +65,43 @@ fn write_and_remove_units() {
     systemd::remove_units(&paths, "fotos").unwrap();
     assert!(!dropin.exists());
     assert!(paths.systemd.join("rsync-tui@.service").exists());
+}
+
+#[test]
+fn watch_template_restarts_on_failure() {
+    let unit = systemd::watch_template(Path::new("/usr/bin/rsync-tui"));
+    assert!(unit.contains("ExecStart=\"/usr/bin/rsync-tui\" watch %i"));
+    assert!(unit.contains("Restart=on-failure"));
+    assert!(unit.contains("WantedBy=default.target"));
+}
+
+#[test]
+fn watch_dropin_only_for_on_change_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = Paths::under(root.path());
+    let exe = Path::new("/usr/bin/rsync-tui");
+    let dropin = paths.systemd.join("rsync-tui-watch@fotos.service.d/mounts.conf");
+
+    let mut watched = job(Schedule::None);
+    watched.on_change = true;
+    systemd::write_units(&paths, &watched, exe).unwrap();
+    assert!(paths.systemd.join("rsync-tui-watch@.service").exists());
+    assert!(fs::read_to_string(&dropin).unwrap().contains("RequiresMountsFor=\"/home/u/Fotos\""));
+
+    systemd::write_units(&paths, &job(Schedule::None), exe).unwrap();
+    assert!(!dropin.exists());
+
+    systemd::write_units(&paths, &watched, exe).unwrap();
+    systemd::remove_units(&paths, "fotos").unwrap();
+    assert!(!dropin.exists());
+}
+
+#[test]
+fn parses_watch_unit_state() {
+    let text = "Id=rsync-tui-watch@fotos.service\nActiveState=active\n\nId=rsync-tui@fotos.service\nActiveState=inactive\n";
+    let status = systemd::parse_status(text);
+    assert!(status["fotos"].watching);
+    assert!(!status["fotos"].running);
 }
 
 #[test]

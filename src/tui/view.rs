@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 
-use crate::job::{Mode, Schedule};
+use crate::job::{Job, Mode, Schedule};
 use crate::state::Outcome;
 use crate::tui::mouse::{Hits, Target};
 
@@ -19,6 +19,14 @@ pub fn schedule_label(schedule: Schedule) -> &'static str {
         Schedule::Hourly => "a cada hora",
         Schedule::Daily => "diário",
         Schedule::Weekly => "semanal",
+    }
+}
+
+pub fn trigger_label(job: &Job) -> String {
+    match (job.schedule, job.on_change) {
+        (_, false) => schedule_label(job.schedule).to_string(),
+        (Schedule::None, true) => "ao alterar".to_string(),
+        (schedule, true) => format!("{} + alterar", schedule_label(schedule)),
     }
 }
 

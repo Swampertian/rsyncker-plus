@@ -27,14 +27,14 @@ fn run_reads_job_name() {
 #[test]
 fn add_uses_defaults() {
     let cli = parse(&["rsync-tui", "add", "/a", "--to", "/b"]).unwrap();
-    let Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit }) = cli.command else {
+    let Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change }) = cli.command else {
         panic!("esperava Add");
     };
     assert_eq!(source, Path::new("/a"));
     assert_eq!(to, Path::new("/b"));
     assert_eq!(mode, Mode::Copy);
     assert_eq!(schedule, Schedule::Daily);
-    assert!(name.is_none() && excludes.is_empty() && bwlimit.is_none());
+    assert!(name.is_none() && excludes.is_empty() && bwlimit.is_none() && !on_change);
 }
 
 #[test]
@@ -57,9 +57,10 @@ fn add_reads_all_options() {
         ".cache",
         "--bwlimit",
         "500",
+        "--on-change",
     ])
     .unwrap();
-    let Some(Command::Add { mode, schedule, name, excludes, bwlimit, .. }) = cli.command else {
+    let Some(Command::Add { mode, schedule, name, excludes, bwlimit, on_change, .. }) = cli.command else {
         panic!("esperava Add");
     };
     assert_eq!(mode, Mode::Mirror);
@@ -67,6 +68,7 @@ fn add_reads_all_options() {
     assert_eq!(name.as_deref(), Some("x"));
     assert_eq!(excludes, ["*.tmp", ".cache"]);
     assert_eq!(bwlimit, Some(500));
+    assert!(on_change);
 }
 
 #[test]

@@ -48,15 +48,48 @@ pub struct Job {
     pub bwlimit_kbps: Option<u32>,
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+    #[serde(default)]
+    pub on_change: bool,
+    #[serde(default = "default_debounce")]
+    pub debounce_secs: u64,
+    #[serde(default = "default_max_wait")]
+    pub max_wait_secs: u64,
+    #[serde(default = "default_cooldown")]
+    pub cooldown_secs: u64,
 }
 
 fn enabled_by_default() -> bool {
     true
 }
 
+fn default_debounce() -> u64 {
+    60
+}
+
+fn default_max_wait() -> u64 {
+    600
+}
+
+fn default_cooldown() -> u64 {
+    120
+}
+
 impl Job {
     pub fn new(name: &str, source: PathBuf, destination: PathBuf, mode: Mode) -> Self {
-        Self { name: name.to_string(), source, destination, mode, excludes: Vec::new(), schedule: Schedule::None, bwlimit_kbps: None, enabled: true }
+        Self {
+            name: name.to_string(),
+            source,
+            destination,
+            mode,
+            excludes: Vec::new(),
+            schedule: Schedule::None,
+            bwlimit_kbps: None,
+            enabled: true,
+            on_change: false,
+            debounce_secs: default_debounce(),
+            max_wait_secs: default_max_wait(),
+            cooldown_secs: default_cooldown(),
+        }
     }
 
     pub fn from_toml(name: &str, text: &str) -> Result<Self> {
