@@ -14,7 +14,7 @@ pub fn render(frame: &mut Frame, rows: &[Row], table: &mut TableState, message: 
     let [header, body, details, status, footer] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(5), Constraint::Length(6), Constraint::Length(1), Constraint::Length(1)]).areas(frame.area());
 
-    frame.render_widget(Line::from(vec![" rsync-tui ".bold().black().on_cyan(), format!("  {} job(s)", rows.len()).dark_gray()]), header);
+    frame.render_widget(Line::from(vec![" S-insync ".bold().black().on_cyan(), format!("  {} job(s)", rows.len()).dark_gray()]), header);
 
     if rows.is_empty() {
         render_empty(frame, body);
