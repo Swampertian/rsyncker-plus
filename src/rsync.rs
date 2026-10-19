@@ -1,12 +1,13 @@
 use std::ffi::OsString;
 use std::io::Read;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
 use anyhow::{Context, Result};
 
 use crate::job::{Job, Mode};
+use crate::remote::rsync_command;
 use crate::state::Outcome;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,17 +49,20 @@ pub fn build_args(job: &Job, opts: Options) -> Vec<OsString> {
         args.push("--info=progress2".into());
         args.push("--no-inc-recursive".into());
     }
-    let mut source = job.source.clone().into_os_string();
+    if let Some(remote) = &job.remote {
+        args.extend(remote.rsync_options());
+    }
+    let mut source = job.source_arg();
     if !source.to_string_lossy().ends_with('/') {
         source.push("/");
     }
     args.push(source);
-    args.push(job.destination.clone().into_os_string());
+    args.push(job.destination_arg());
     args
 }
 
 pub fn execute(args: &[OsString]) -> Result<Output> {
-    let out = Command::new("rsync").args(args).output().context("não foi possível executar rsync (está instalado?)")?;
+    let out = rsync_command().args(args).output().context("não foi possível executar rsync (está instalado?)")?;
     Ok(Output {
         exit_code: out.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -104,7 +108,7 @@ impl Cancel {
 }
 
 pub fn execute_streaming(args: &[OsString], cancel: &Cancel, mut on_line: impl FnMut(&str)) -> Result<Output> {
-    let mut child = Command::new("rsync")
+    let mut child = rsync_command()
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -27,14 +27,24 @@ fn run_reads_job_name() {
 #[test]
 fn add_uses_defaults() {
     let cli = parse(&["rsync-tui", "add", "/a", "--to", "/b"]).unwrap();
-    let Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change }) = cli.command else {
+    let Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change, key }) = cli.command else {
         panic!("esperava Add");
     };
-    assert_eq!(source, Path::new("/a"));
-    assert_eq!(to, Path::new("/b"));
+    assert_eq!(source, "/a");
+    assert_eq!(to, "/b");
     assert_eq!(mode, Mode::Copy);
     assert_eq!(schedule, Schedule::Daily);
-    assert!(name.is_none() && excludes.is_empty() && bwlimit.is_none() && !on_change);
+    assert!(name.is_none() && excludes.is_empty() && bwlimit.is_none() && !on_change && key.is_none());
+}
+
+#[test]
+fn add_accepts_remote_destination_and_key() {
+    let cli = parse(&["rsync-tui", "add", "/a", "--to", "nas:/backup", "--key", "/home/u/.ssh/id_backup"]).unwrap();
+    let Some(Command::Add { to, key, .. }) = cli.command else {
+        panic!("esperava Add");
+    };
+    assert_eq!(to, "nas:/backup");
+    assert_eq!(key.as_deref(), Some(Path::new("/home/u/.ssh/id_backup")));
 }
 
 #[test]

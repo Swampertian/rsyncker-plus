@@ -1,17 +1,20 @@
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::daemon::runner;
+use crate::hostkey::{self, Unknown};
 use crate::job::Job;
 use crate::paths::Paths;
+use crate::remote::Protocol;
 use crate::rsync::{self, Cancel, Options};
 use crate::state::{self, RunState};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Update {
     Line(String),
+    UnknownHost(Unknown),
     Finished(Result<RunState, String>),
 }
 
@@ -25,6 +28,12 @@ impl Task {
     pub fn preview(job: Job) -> Self {
         Self::spawn(move |cancel, sender| {
             let mut job = job;
+            if let Some(remote) = job.remote.as_ref().filter(|r| r.protocol == Protocol::Ssh) {
+                if let Some(unknown) = hostkey::check(remote)? {
+                    let _ = sender.send(Update::UnknownHost(unknown));
+                    bail!("chave do host ainda não confirmada");
+                }
+            }
             runner::preflight(&mut job)?;
             let started_at = state::now();
             let args = rsync::build_args(&job, Options { dry_run: true, progress: false });

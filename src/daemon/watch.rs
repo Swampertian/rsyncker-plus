@@ -96,6 +96,7 @@ pub fn relevant(job: &Job, event: &Event) -> bool {
 
 pub fn run(paths: &Paths, name: &str) -> Result<()> {
     let job = Job::load(&paths.jobs, name)?;
+    job.validate()?;
     if !job.on_change {
         bail!("job '{name}' não tem gatilho por alteração (on_change = false)");
     }

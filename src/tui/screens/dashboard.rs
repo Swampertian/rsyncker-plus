@@ -4,7 +4,6 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Paragraph, Row as TableRow, Table, TableState};
 
-use crate::paths::shorten_home;
 use crate::state;
 use crate::tui::app::{Action, Level, Message, Row};
 use crate::tui::mouse::{Hits, Target};
@@ -72,7 +71,7 @@ fn render_table(frame: &mut Frame, area: Rect, rows: &[Row], table: &mut TableSt
         } else {
             ("desativado".to_string(), "-".to_string())
         };
-        let paths = format!("{} → {}", shorten_home(&job.source), shorten_home(&job.destination));
+        let paths = format!("{} → {}", job.source_label(), job.destination_label());
         let style = if job.enabled { Style::new() } else { Style::new().fg(Color::DarkGray) };
         TableRow::new([
             Cell::from(Span::styled(status_text, status_style)),
@@ -113,8 +112,8 @@ fn render_details(frame: &mut Frame, area: Rect, row: Option<&Row>) {
     let label = |text: &'static str| Span::styled(format!("{text:<10}"), Style::new().fg(Color::Gray));
     let excludes = if job.excludes.is_empty() { "-".to_string() } else { job.excludes.join(", ") };
     let mut lines = vec![
-        Line::from(vec![label("Origem"), job.source.display().to_string().into()]),
-        Line::from(vec![label("Destino"), job.destination.display().to_string().into()]),
+        Line::from(vec![label("Origem"), job.source_label().into()]),
+        Line::from(vec![label("Destino"), job.destination_label().into()]),
         Line::from(vec![label("Ignorar"), excludes.into()]),
     ];
     let last = match &row.last_run {

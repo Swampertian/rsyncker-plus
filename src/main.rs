@@ -6,7 +6,8 @@ use rsync_tui::cli::{Cli, Command};
 use rsync_tui::daemon::{runner, systemd, watch};
 use rsync_tui::job::{self, Job};
 use rsync_tui::manage;
-use rsync_tui::paths::Paths;
+use rsync_tui::paths::{Paths, expand_home};
+use rsync_tui::remote;
 use rsync_tui::state::{self, Outcome};
 
 fn main() -> Result<()> {
@@ -23,15 +24,18 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Watch { job }) => watch::run(&paths, &job)?,
-        Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change }) => {
-            let name = name.unwrap_or_else(|| job::name_from_path(&source));
-            let mut new = Job::new(&name, source, to, mode);
+        Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change, key }) => {
+            let source = remote::parse(&source)?;
+            let destination = remote::parse(&to)?;
+            let name = name.unwrap_or_else(|| job::name_from_path(source.path()));
+            let key = key.map(|path| expand_home(&path.to_string_lossy()));
+            let mut new = Job::from_endpoints(&name, source, destination, mode, key)?;
             new.schedule = schedule;
             new.excludes = excludes;
             new.bwlimit_kbps = bwlimit;
             new.on_change = on_change;
             let created = manage::add(&paths, new, &exe)?;
-            println!("job '{}' criado: {} -> {}", created.name, created.source.display(), created.destination.display());
+            println!("job '{}' criado: {} -> {}", created.name, created.source_label(), created.destination_label());
         }
         Some(Command::List) => print_list(&paths)?,
         Some(Command::Remove { job }) => {
@@ -70,8 +74,8 @@ fn print_list(paths: &Paths) -> Result<()> {
             job.mode,
             job.schedule,
             if job.on_change { "+alteração" } else { "" },
-            job.source.display(),
-            job.destination.display(),
+            job.source_label(),
+            job.destination_label(),
             last,
             next
         );

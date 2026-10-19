@@ -12,8 +12,10 @@ use crate::daemon::systemd::{self, UnitStatus};
 use crate::job::Job;
 use crate::manage;
 use crate::paths::Paths;
+use crate::remote::Side;
 use crate::state::RunState;
 use crate::tui::mouse::{Hits, Target};
+use crate::tui::screens::discover::{self, Discover};
 use crate::tui::screens::job_form::{FormEvent, JobForm};
 use crate::tui::screens::preview::{self, Preview};
 use crate::tui::screens::run::{self, RunView};
@@ -69,7 +71,7 @@ impl Row {
     pub fn status(&self) -> Status {
         if self.running {
             Status::Running
-        } else if !self.job.destination.is_dir() {
+        } else if self.job.is_local(Side::Destination) && !self.job.destination.is_dir() {
             Status::DestinationMissing
         } else {
             self.last_run.as_ref().map_or(Status::Never, |r| Status::Last(r.outcome))
@@ -101,6 +103,7 @@ pub enum Screen {
     Confirm { title: String, message: String, pending: Pending },
     Preview(Box<Preview>),
     Run(Box<RunView>),
+    Discover(Box<Discover>),
 }
 
 pub struct App {
@@ -162,6 +165,7 @@ impl App {
             Screen::Confirm { title, message, .. } => confirm::render(frame, title, message, &mut self.hits),
             Screen::Preview(preview) => preview::render(frame, preview, &mut self.hits),
             Screen::Run(view) => run::render(frame, view, &mut self.hits),
+            Screen::Discover(view) => discover::render(frame, view, &mut self.hits),
         }
     }
 
@@ -169,7 +173,7 @@ impl App {
         match &mut self.screen {
             Screen::Preview(preview) => {
                 preview.update();
-                if preview.save.is_some() && matches!(preview.result, Some(Err(_))) {
+                if preview.save.is_some() && preview.host.is_none() && matches!(preview.result, Some(Err(_))) {
                     self.back_to_form_with_error();
                 }
             }
@@ -178,6 +182,7 @@ impl App {
                     self.refresh();
                 }
             }
+            Screen::Discover(view) => view.update(),
             _ => {}
         }
     }
@@ -231,6 +236,14 @@ impl App {
                 FormEvent::None => {}
                 FormEvent::Cancel => self.back(),
                 FormEvent::Submit => self.submit_form(),
+                FormEvent::Discover => self.open_discover(),
+            },
+            Screen::Discover(view) => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => view.move_by(-1),
+                KeyCode::Down | KeyCode::Char('j') => view.move_by(1),
+                KeyCode::Enter => self.yes(),
+                KeyCode::Esc | KeyCode::Char('q') => self.back(),
+                _ => {}
             },
             Screen::Confirm { .. } => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('s') => self.yes(),
@@ -258,6 +271,24 @@ impl App {
     fn yes(&mut self) {
         match &self.screen {
             Screen::Confirm { .. } => self.confirm(),
+            Screen::Discover(_) => {
+                if let Screen::Discover(view) = mem::replace(&mut self.screen, Screen::Dashboard) {
+                    self.screen = Screen::Form(view.choose());
+                }
+            }
+            Screen::Preview(preview) if preview.host.is_some() => {
+                let Screen::Preview(preview) = mem::replace(&mut self.screen, Screen::Dashboard) else {
+                    return;
+                };
+                match preview.trust_host() {
+                    Ok(restarted) => self.screen = Screen::Preview(Box::new(restarted)),
+                    Err((mut preview, error)) => {
+                        preview.host = None;
+                        preview.result = Some(Err(error));
+                        self.screen = Screen::Preview(Box::new(preview));
+                    }
+                }
+            }
             Screen::Preview(preview) if preview.can_save() => {
                 let Screen::Preview(preview) = mem::replace(&mut self.screen, Screen::Dashboard) else {
                     return;
@@ -285,6 +316,7 @@ impl App {
                 view.cancel();
                 self.screen = Screen::Run(view);
             }
+            Screen::Discover(view) => self.screen = Screen::Form(view.form),
             _ => {}
         }
     }
@@ -308,12 +340,22 @@ impl App {
             Screen::Dashboard => self.dispatch(Action::Down),
             Screen::Form(form) => form.move_focus(delta),
             Screen::Preview(preview) => preview.scroll_by(delta * 3),
+            Screen::Discover(view) => view.move_by(delta),
             Screen::Confirm { .. } | Screen::Run(_) => {}
         }
     }
 
     pub fn click(&mut self, target: Target) {
         match target {
+            Target::Row(i) if matches!(self.screen, Screen::Discover(_)) => {
+                if let Screen::Discover(view) = &mut self.screen {
+                    if view.selected == i {
+                        self.yes();
+                    } else {
+                        view.selected = i;
+                    }
+                }
+            }
             Target::Row(i) => {
                 self.message = None;
                 if self.table.selected() == Some(i) {
@@ -332,6 +374,7 @@ impl App {
                 }
             }
             Target::Submit => self.submit_form(),
+            Target::Discover => self.open_discover(),
             Target::Cancel | Target::Reject => self.back(),
             Target::Confirm => self.yes(),
         }
@@ -401,11 +444,21 @@ impl App {
                 return;
             }
         };
-        if form.is_new() || form.turns_into_mirror() {
+        if form.is_new() || form.turns_into_mirror() || form.changes_remote(&job) {
             self.screen = Screen::Preview(Box::new(Preview::start(&job, Some(form))));
             return;
         }
         self.save(form, job);
+    }
+
+    fn open_discover(&mut self) {
+        let Screen::Form(mut form) = mem::replace(&mut self.screen, Screen::Dashboard) else {
+            return;
+        };
+        if !form.picks_endpoint() {
+            form.focus = 1;
+        }
+        self.screen = Screen::Discover(Box::new(Discover::start(form)));
     }
 
     fn save(&mut self, mut form: Box<JobForm>, job: Job) {
