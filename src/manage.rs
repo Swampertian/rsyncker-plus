@@ -6,16 +6,22 @@ use anyhow::{Context, Result, bail};
 use crate::daemon::systemd;
 use crate::job::Job;
 use crate::paths::Paths;
+use crate::remote::Side;
 use crate::state::RunState;
 
 pub fn prepare(mut job: Job) -> Result<Job> {
-    job.source = fs::canonicalize(&job.source).with_context(|| format!("origem não existe: {}", job.source.display()))?;
-    job.destination = fs::canonicalize(&job.destination).with_context(|| format!("destino não existe: {} (crie a pasta antes)", job.destination.display()))?;
-    if !job.source.is_dir() {
-        bail!("origem não é diretório: {}", job.source.display());
+    if job.is_local(Side::Source) {
+        job.source = fs::canonicalize(&job.source).with_context(|| format!("origem não existe: {}", job.source.display()))?;
+        if !job.source.is_dir() {
+            bail!("origem não é diretório: {}", job.source.display());
+        }
     }
-    if !job.destination.is_dir() {
-        bail!("destino não é diretório: {}", job.destination.display());
+    if job.is_local(Side::Destination) {
+        job.destination =
+            fs::canonicalize(&job.destination).with_context(|| format!("destino não existe: {} (crie a pasta antes)", job.destination.display()))?;
+        if !job.destination.is_dir() {
+            bail!("destino não é diretório: {}", job.destination.display());
+        }
     }
     job.validate()?;
     Ok(job)

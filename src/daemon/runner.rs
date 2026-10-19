@@ -7,6 +7,7 @@ use fs2::FileExt;
 
 use crate::job::{Job, validate_name};
 use crate::paths::Paths;
+use crate::remote::{self, Side};
 use crate::rsync::{self, Options, Output};
 use crate::state::{self, Outcome, RunState};
 
@@ -54,7 +55,7 @@ pub fn finish(started_at: u64, output: &Output) -> RunState {
         files_transferred: stats.files_transferred,
         files_deleted: stats.files_deleted,
         bytes_transferred: stats.bytes_transferred,
-        message: (outcome != Outcome::Success).then(|| output.stderr.lines().last().unwrap_or_default().to_string()),
+        message: (outcome != Outcome::Success).then(|| remote::explain(&output.stderr).unwrap_or_else(|| remote::last_line(&output.stderr))),
     }
 }
 
@@ -72,19 +73,28 @@ pub fn acquire_lock(paths: &Paths, name: &str) -> Result<File> {
 }
 
 pub fn preflight(job: &mut Job) -> Result<()> {
-    if !job.source.is_dir() {
-        bail!("origem não existe: {}", job.source.display());
+    if job.is_local(Side::Source) {
+        if !job.source.is_dir() {
+            bail!("origem não existe: {}", job.source.display());
+        }
+        job.source = fs::canonicalize(&job.source).with_context(|| format!("não foi possível resolver origem: {}", job.source.display()))?;
+        fs::read_dir(&job.source).context("sem permissão de leitura na origem")?;
     }
-    if !job.destination.is_dir() {
-        bail!("destino não existe (disco desmontado?): {}", job.destination.display());
+    if job.is_local(Side::Destination) {
+        if !job.destination.is_dir() {
+            bail!("destino não existe (disco desmontado?): {}", job.destination.display());
+        }
+        job.destination = fs::canonicalize(&job.destination).with_context(|| format!("não foi possível resolver destino: {}", job.destination.display()))?;
     }
-    let source = fs::canonicalize(&job.source).with_context(|| format!("não foi possível resolver origem: {}", job.source.display()))?;
-    let destination = fs::canonicalize(&job.destination).with_context(|| format!("não foi possível resolver destino: {}", job.destination.display()))?;
-    if source.starts_with(&destination) || destination.starts_with(&source) {
-        bail!("origem e destino não podem ser iguais nem um dentro do outro após resolver links simbólicos");
+    match &job.remote {
+        None if job.source.starts_with(&job.destination) || job.destination.starts_with(&job.source) => {
+            bail!("origem e destino não podem ser iguais nem um dentro do outro após resolver links simbólicos")
+        }
+        None => {}
+        Some(remote) => {
+            let path = if remote.side == Side::Source { &job.source } else { &job.destination };
+            remote::check_dir(remote, path)?;
+        }
     }
-    job.source = source;
-    job.destination = destination;
-    fs::read_dir(&job.source).context("sem permissão de leitura na origem")?;
     Ok(())
 }

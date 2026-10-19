@@ -27,11 +27,11 @@ pub enum Command {
     },
     /// Cria um job a partir de um diretório de origem.
     Add {
-        /// Diretório de origem.
-        source: PathBuf,
-        /// Diretório de destino (precisa existir).
+        /// Diretório de origem (local, usuário@host:/caminho ou rsync://host/módulo).
+        source: String,
+        /// Diretório de destino (precisa existir; local ou remoto como a origem).
         #[arg(long)]
-        to: PathBuf,
+        to: String,
         /// copy: só adiciona/atualiza. mirror: apaga no destino o que sumiu da origem.
         #[arg(long, value_enum, default_value_t = Mode::Copy)]
         mode: Mode,
@@ -50,6 +50,9 @@ pub enum Command {
         /// Também roda quando algo muda na origem.
         #[arg(long)]
         on_change: bool,
+        /// Chave SSH privada (ssh) ou arquivo de senha (rsync://) do lado remoto.
+        #[arg(long)]
+        key: Option<PathBuf>,
     },
     /// Lista os jobs com último e próximo run.
     List,

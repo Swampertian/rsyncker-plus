@@ -1,9 +1,10 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
+use crate::hostkey::{self, Unknown};
 use crate::job::{Job, Mode};
 use crate::paths::shorten_home;
 use crate::rsync::{self, Change, Item};
@@ -15,6 +16,7 @@ use crate::tui::view::{centered, key_hints};
 
 #[derive(Debug)]
 pub struct Preview {
+    pub job: Job,
     pub name: String,
     pub source: String,
     pub destination: String,
@@ -23,22 +25,36 @@ pub struct Preview {
     pub result: Option<Result<RunState, String>>,
     pub scroll: usize,
     pub save: Option<Box<JobForm>>,
+    pub host: Option<Unknown>,
     task: Option<Task>,
 }
 
 impl Preview {
     pub fn start(job: &Job, save: Option<Box<JobForm>>) -> Self {
         Self {
+            job: job.clone(),
             name: job.name.clone(),
-            source: shorten_home(&job.source),
-            destination: shorten_home(&job.destination),
+            source: job.source_label(),
+            destination: job.destination_label(),
             mirror: job.mode == Mode::Mirror,
             items: Vec::new(),
             result: None,
             scroll: 0,
             save,
+            host: None,
             task: Some(Task::preview(job.clone())),
         }
+    }
+
+    pub fn trust_host(self) -> Result<Self, (Self, String)> {
+        let Some(unknown) = &self.host else {
+            return Ok(self);
+        };
+        if let Err(error) = hostkey::trust(unknown) {
+            let message = format!("{error:#}");
+            return Err((self, message));
+        }
+        Ok(Self::start(&self.job, self.save))
     }
 
     pub fn update(&mut self) {
@@ -48,6 +64,7 @@ impl Preview {
         for update in task.updates() {
             match update {
                 Update::Line(line) => self.items.extend(rsync::parse_item(&line)),
+                Update::UnknownHost(unknown) => self.host = Some(unknown),
                 Update::Finished(result) => {
                     self.result = Some(result);
                     self.task = None;
@@ -109,6 +126,11 @@ pub fn render(frame: &mut Frame, preview: &Preview, hits: &mut Hits) {
 
     frame.render_widget(Line::from(format!(" {} → {}", preview.source, preview.destination)).dark_gray(), paths);
 
+    if let Some(unknown) = &preview.host {
+        render_host(frame, area, unknown, hits);
+        return;
+    }
+
     let summary_line = if preview.is_done() {
         Line::from(vec![
             " ".into(),
@@ -144,6 +166,30 @@ pub fn render(frame: &mut Frame, preview: &Preview, hits: &mut Hits) {
         items.push(("y", "salvar", Some(Target::Confirm)));
     }
     items.push(("Esc", if preview.save.is_some() { "voltar" } else { "fechar" }, Some(Target::Reject)));
+    frame.render_widget(key_hints(keys, &items, hits), keys);
+}
+
+fn render_host(frame: &mut Frame, outer: Rect, unknown: &Unknown, hits: &mut Hits) {
+    let height = 11 + unknown.fingerprints.len() as u16;
+    let area = centered(outer, 78, height);
+    let block = Block::bordered().title(" Host desconhecido ").border_style(Style::new().fg(Color::Yellow));
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+
+    let mut lines =
+        vec![Line::from(format!(" Primeira conexão com {}.", unknown.host)).bold(), Line::default(), Line::from(" Impressão digital da chave do servidor:")];
+    lines.extend(unknown.fingerprints.iter().map(|f| Line::from(format!("   {f}")).cyan().bold()));
+    lines.extend([
+        Line::default(),
+        Line::from(" Confira no próprio servidor antes de confiar:").dark_gray(),
+        Line::from("   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub").dark_gray(),
+        Line::from(format!(" Ao confiar, a chave é gravada em {}.", shorten_home(&unknown.file))).dark_gray(),
+    ]);
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    let keys = Rect { y: inner.y + inner.height.saturating_sub(1), height: 1, ..inner };
+    let items = [("y", "confiar e continuar", Some(Target::Confirm)), ("Esc", "voltar", Some(Target::Reject))];
     frame.render_widget(key_hints(keys, &items, hits), keys);
 }
 

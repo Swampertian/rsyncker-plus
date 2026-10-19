@@ -6,12 +6,17 @@ use std::time::{Duration, Instant};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use rsync_tui::discover::{Device, Found};
+use rsync_tui::hostkey::Unknown;
 use rsync_tui::job::{Job, Mode, Schedule};
 use rsync_tui::paths::Paths;
+use rsync_tui::remote::{self, Protocol, Side};
 use rsync_tui::tui::app::{Action, App, Screen};
 use rsync_tui::tui::input::TextInput;
 use rsync_tui::tui::mouse::{Hits, Target};
+use rsync_tui::tui::screens::discover::Discover;
 use rsync_tui::tui::screens::job_form::{FIELDS, Field, FormEvent, JobForm};
+use rsync_tui::tui::screens::preview::Preview;
 use rsync_tui::tui::view;
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -513,6 +518,107 @@ fn run_copies_and_records_state() {
     let last = app.rows[0].last_run.as_ref().expect("estado deveria ser gravado");
     assert_eq!(last.files_transferred, 1);
 
+    app.on_key(key(KeyCode::Esc));
+    assert!(matches!(app.screen, Screen::Dashboard));
+}
+
+#[test]
+fn form_builds_remote_job_with_key() {
+    let mut form = JobForm::new();
+    type_text(&mut form, "/home/u/Fotos");
+    focus(&mut form, Field::Destination);
+    type_text(&mut form, "ana@nas:/backup/fotos");
+    focus(&mut form, Field::Credential);
+    type_text(&mut form, "/home/u/.ssh/id_backup");
+    let job = form.to_job().unwrap();
+    let remote = job.remote.as_ref().unwrap();
+    assert_eq!((remote.side, remote.protocol, remote.host.as_str()), (Side::Destination, Protocol::Ssh, "nas"));
+    assert_eq!(remote.identity.as_deref(), Some(std::path::Path::new("/home/u/.ssh/id_backup")));
+    assert_eq!(job.destination, PathBuf::from("/backup/fotos"));
+}
+
+#[test]
+fn form_rejects_watch_on_remote_source() {
+    let mut form = JobForm::new();
+    type_text(&mut form, "nas:/dados");
+    focus(&mut form, Field::Destination);
+    type_text(&mut form, "/home/u/copia");
+    form.on_change = true;
+    let job = form.to_job().unwrap();
+    assert!(job.validate().is_err());
+}
+
+#[test]
+fn edit_shows_remote_address_and_detects_change() {
+    let source = remote::parse("/home/u/Fotos").unwrap();
+    let destination = remote::parse("rsync://bkp@nas/modulo").unwrap();
+    let job = Job::from_endpoints("fotos", source, destination, Mode::Copy, Some("/home/u/.senha".into())).unwrap();
+    let mut form = JobForm::edit(&job);
+    assert_eq!(form.destination.value(), "rsync://bkp@nas/modulo");
+    assert!(form.credential.value().ends_with(".senha"));
+    assert!(!form.changes_remote(&form.to_job().unwrap()));
+
+    focus(&mut form, Field::Destination);
+    type_text(&mut form, "2");
+    assert!(form.changes_remote(&form.to_job().unwrap()));
+}
+
+#[test]
+fn f2_only_works_on_endpoint_fields() {
+    let mut form = JobForm::new();
+    assert_eq!(form.on_key(key(KeyCode::F(2))), FormEvent::Discover);
+    focus(&mut form, Field::Name);
+    assert_eq!(form.on_key(key(KeyCode::F(2))), FormEvent::None);
+}
+
+#[test]
+fn discovery_fills_focused_field() {
+    let (_root, mut app) = app_with_job();
+    app.on_key(key(KeyCode::Char('n')));
+    app.on_key(key(KeyCode::Tab));
+    app.on_key(key(KeyCode::F(2)));
+    let Screen::Discover(view) = std::mem::replace(&mut app.screen, Screen::Dashboard) else { panic!("F2 deveria abrir a busca") };
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let nas = Device {
+        name: "Meu NAS".into(),
+        host: "nas.local".into(),
+        address: "192.168.1.20".into(),
+        protocol: Protocol::Ssh,
+        port: Some(22),
+        from_config: false,
+    };
+    let pi =
+        Device { name: "Pi".into(), host: "pi.local".into(), address: "192.168.1.30".into(), protocol: Protocol::Daemon, port: Some(873), from_config: false };
+    sender.send(Found { devices: vec![nas, pi], warning: None }).unwrap();
+    app.screen = Screen::Discover(Box::new(Discover::with(view.form, receiver)));
+    app.tick();
+    assert!(screen_text(&mut app).contains("Meu NAS"));
+
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::Enter));
+    let Screen::Form(form) = &app.screen else { panic!("Enter deveria voltar ao formulário") };
+    assert_eq!(form.destination.value(), "rsync://pi.local/");
+    assert_eq!(form.focused(), Field::Destination);
+}
+
+#[test]
+fn unknown_host_shows_fingerprint_prompt() {
+    let source = remote::parse("/home/u/Fotos").unwrap();
+    let destination = remote::parse("nas.invalid:/backup").unwrap();
+    let job = Job::from_endpoints("fotos", source, destination, Mode::Copy, None).unwrap();
+    let (_root, mut app) = app_with_job();
+    let mut preview = Preview::start(&job, None);
+    preview.host = Some(Unknown {
+        host: "nas.invalid".into(),
+        fingerprints: vec!["SHA256:abc (ED25519)".into()],
+        entries: String::new(),
+        file: "/tmp/known_hosts".into(),
+    });
+    app.screen = Screen::Preview(Box::new(preview));
+    let text = screen_text(&mut app);
+    assert!(text.contains("Host desconhecido"));
+    assert!(text.contains("SHA256:abc (ED25519)"));
     app.on_key(key(KeyCode::Esc));
     assert!(matches!(app.screen, Screen::Dashboard));
 }

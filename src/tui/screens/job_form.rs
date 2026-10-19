@@ -7,7 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::job::{self, Job, Mode, Schedule};
-use crate::paths::expand_home;
+use crate::paths::{expand_home, shorten_home};
+use crate::remote;
 use crate::tui::input::TextInput;
 use crate::tui::mouse::{Hits, Target};
 use crate::tui::view::{centered, key_hints, mode_label, schedule_label};
@@ -16,6 +17,7 @@ use crate::tui::view::{centered, key_hints, mode_label, schedule_label};
 pub enum Field {
     Source,
     Destination,
+    Credential,
     Name,
     Mode,
     Schedule,
@@ -24,13 +26,15 @@ pub enum Field {
     Bwlimit,
 }
 
-pub const FIELDS: [Field; 8] = [Field::Source, Field::Destination, Field::Name, Field::Mode, Field::Schedule, Field::OnChange, Field::Excludes, Field::Bwlimit];
+pub const FIELDS: [Field; 9] =
+    [Field::Source, Field::Destination, Field::Credential, Field::Name, Field::Mode, Field::Schedule, Field::OnChange, Field::Excludes, Field::Bwlimit];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormEvent {
     None,
     Cancel,
     Submit,
+    Discover,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +42,7 @@ pub struct JobForm {
     pub original: Option<Job>,
     pub source: TextInput,
     pub destination: TextInput,
+    pub credential: TextInput,
     pub name: TextInput,
     pub mode: Mode,
     pub schedule: Schedule,
@@ -55,6 +60,7 @@ impl JobForm {
             original: None,
             source: TextInput::default(),
             destination: TextInput::default(),
+            credential: TextInput::default(),
             name: TextInput::default(),
             mode: Mode::Copy,
             schedule: Schedule::Daily,
@@ -70,8 +76,9 @@ impl JobForm {
     pub fn edit(job: &Job) -> Self {
         Self {
             original: Some(job.clone()),
-            source: TextInput::new(&job.source.to_string_lossy()),
-            destination: TextInput::new(&job.destination.to_string_lossy()),
+            source: TextInput::new(&job.source_label()),
+            destination: TextInput::new(&job.destination_label()),
+            credential: TextInput::new(&job.remote.as_ref().and_then(|r| r.credential()).map(shorten_home).unwrap_or_default()),
             name: TextInput::new(&job.name),
             mode: job.mode,
             schedule: job.schedule,
@@ -97,12 +104,28 @@ impl JobForm {
         match key.code {
             KeyCode::Esc => return FormEvent::Cancel,
             KeyCode::Char('s') if ctrl => return FormEvent::Submit,
+            KeyCode::F(2) if self.picks_endpoint() => return FormEvent::Discover,
             KeyCode::Enter if self.focus == FIELDS.len() - 1 => return FormEvent::Submit,
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down => self.move_focus(1),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
             _ => self.edit_field(key),
         }
         FormEvent::None
+    }
+
+    pub fn picks_endpoint(&self) -> bool {
+        matches!(self.focused(), Field::Source | Field::Destination)
+    }
+
+    pub fn set_focused(&mut self, value: &str) {
+        match self.focused() {
+            Field::Source => {
+                self.source.set(value);
+                self.suggest_name();
+            }
+            Field::Destination => self.destination.set(value),
+            _ => {}
+        }
     }
 
     pub fn click(&mut self, index: usize) {
@@ -145,13 +168,15 @@ impl JobForm {
                 }
             }
             Field::Source => {
-                if self.source.handle(key) && self.is_new() && !self.name_edited {
-                    let suggestion = job::name_from_path(&expand_home(self.source.value()));
-                    self.name.set(&suggestion);
+                if self.source.handle(key) {
+                    self.suggest_name();
                 }
             }
             Field::Destination => {
                 self.destination.handle(key);
+            }
+            Field::Credential => {
+                self.credential.handle(key);
             }
             Field::Excludes => {
                 self.excludes.handle(key);
@@ -159,6 +184,13 @@ impl JobForm {
             Field::Bwlimit => {
                 self.bwlimit.handle(key);
             }
+        }
+    }
+
+    fn suggest_name(&mut self) {
+        if self.is_new() && !self.name_edited {
+            let suggestion = job::name_from_path(&expand_home(self.source.value()));
+            self.name.set(&suggestion);
         }
     }
 
@@ -174,7 +206,11 @@ impl JobForm {
         let name = self.name.value().trim();
         job::validate_name(name)?;
 
-        let mut job = Job::new(name, expand_home(source), expand_home(destination), self.mode);
+        let source = remote::parse(source).context("origem")?;
+        let destination = remote::parse(destination).context("destino")?;
+        let credential = self.credential.value().trim();
+        let credential = (!credential.is_empty()).then(|| expand_home(credential));
+        let mut job = Job::from_endpoints(name, source, destination, self.mode, credential)?;
         job.schedule = self.schedule;
         job.on_change = self.on_change;
         job.excludes = self.excludes.value().split(',').map(str::trim).filter(|p| !p.is_empty()).map(String::from).collect();
@@ -187,6 +223,10 @@ impl JobForm {
             job.cooldown_secs = original.cooldown_secs;
         }
         Ok(job)
+    }
+
+    pub fn changes_remote(&self, job: &Job) -> bool {
+        job.remote.is_some() && self.original.as_ref().is_some_and(|o| o.remote != job.remote || o.source != job.source || o.destination != job.destination)
     }
 
     pub fn turns_into_mirror(&self) -> bool {
@@ -203,7 +243,7 @@ impl Default for JobForm {
 const LABEL_WIDTH: u16 = 14;
 
 pub fn render(frame: &mut Frame, form: &JobForm, hits: &mut Hits) {
-    let area = centered(frame.area(), 76, 21);
+    let area = centered(frame.area(), 84, 23);
     let title = if form.is_new() { " Novo job " } else { " Editar job " };
     let block = Block::bordered().title(title).border_style(Style::new().fg(Color::Cyan));
     let inner = block.inner(area);
@@ -250,8 +290,13 @@ pub fn render(frame: &mut Frame, form: &JobForm, hits: &mut Hits) {
 
     let help_area = Rect { y: inner.y + inner.height.saturating_sub(1), height: 1, ..inner };
     frame.render_widget(Paragraph::new(lines), inner);
-    let items =
-        [("Tab/↑↓", "campos", None), ("←→/espaço", "opções", None), ("Ctrl+S", "salvar", Some(Target::Submit)), ("Esc", "cancelar", Some(Target::Cancel))];
+    let items = [
+        ("Tab/↑↓", "campos", None),
+        ("←→/espaço", "opções", None),
+        ("F2", "rede", Some(Target::Discover)),
+        ("Ctrl+S", "salvar", Some(Target::Submit)),
+        ("Esc", "cancelar", Some(Target::Cancel)),
+    ];
     frame.render_widget(key_hints(help_area, &items, hits), help_area);
     if let Some(position) = cursor {
         frame.set_cursor_position(position);
@@ -262,6 +307,7 @@ fn label_of(field: Field) -> &'static str {
     match field {
         Field::Source => "Origem",
         Field::Destination => "Destino",
+        Field::Credential => "Chave/senha",
         Field::Name => "Nome",
         Field::Mode => "Modo",
         Field::Schedule => "Agenda",
@@ -273,7 +319,9 @@ fn label_of(field: Field) -> &'static str {
 
 fn hint_of(field: Field) -> Option<&'static str> {
     match field {
-        Field::Destination => Some("a pasta precisa existir"),
+        Field::Source => Some("local ou remoto: usuário@host:/caminho, rsync://host/módulo"),
+        Field::Destination => Some("a pasta precisa existir · F2 busca dispositivos na rede"),
+        Field::Credential => Some("remoto: chave SSH privada ou arquivo de senha do rsync"),
         Field::OnChange => Some("roda sozinho quando algo muda na origem"),
         Field::Excludes => Some("separados por vírgula: .cache, *.tmp"),
         Field::Bwlimit => Some("vazio = sem limite"),
@@ -285,6 +333,7 @@ fn input_of(form: &JobForm, field: Field) -> &TextInput {
     match field {
         Field::Source => &form.source,
         Field::Destination => &form.destination,
+        Field::Credential => &form.credential,
         Field::Name => &form.name,
         Field::Excludes => &form.excludes,
         _ => &form.bwlimit,

@@ -41,6 +41,7 @@ impl RunView {
         };
         for update in task.updates() {
             match update {
+                Update::UnknownHost(_) => {}
                 Update::Line(line) => self.on_line(&line),
                 Update::Finished(result) => {
                     self.result = Some(result);

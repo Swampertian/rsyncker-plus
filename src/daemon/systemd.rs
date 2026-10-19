@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::job::Job;
 use crate::paths::Paths;
+use crate::remote::Side;
 
 pub const SERVICE_TEMPLATE: &str = "rsync-tui@.service";
 pub const WATCH_TEMPLATE: &str = "rsync-tui-watch@.service";
@@ -58,7 +59,12 @@ pub fn watch_dropin(job: &Job) -> String {
 }
 
 pub fn mounts_dropin(job: &Job) -> String {
-    format!("[Unit]\nRequiresMountsFor={} {}\n", quote(&job.source), quote(&job.destination))
+    let local: Vec<String> = [(Side::Source, &job.source), (Side::Destination, &job.destination)]
+        .into_iter()
+        .filter(|(side, _)| job.is_local(*side))
+        .map(|(_, path)| quote(path))
+        .collect();
+    format!("[Unit]\nRequiresMountsFor={}\n", local.join(" "))
 }
 
 pub fn timer_unit(job: &Job) -> Option<String> {

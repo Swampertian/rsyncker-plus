@@ -1,9 +1,13 @@
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+
+use crate::paths::shorten_home;
+use crate::remote::{Endpoint, Remote, Side};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -56,6 +60,8 @@ pub struct Job {
     pub max_wait_secs: u64,
     #[serde(default = "default_cooldown")]
     pub cooldown_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<Remote>,
 }
 
 fn enabled_by_default() -> bool {
@@ -89,6 +95,60 @@ impl Job {
             debounce_secs: default_debounce(),
             max_wait_secs: default_max_wait(),
             cooldown_secs: default_cooldown(),
+            remote: None,
+        }
+    }
+
+    pub fn from_endpoints(name: &str, source: Endpoint, destination: Endpoint, mode: Mode, credential: Option<PathBuf>) -> Result<Self> {
+        let (source, destination, remote) = match (source, destination) {
+            (Endpoint::Local(source), Endpoint::Local(destination)) => {
+                if credential.is_some() {
+                    bail!("chave/senha só vale quando a origem ou o destino é remoto");
+                }
+                (source, destination, None)
+            }
+            (Endpoint::Remote(address), Endpoint::Local(destination)) => {
+                (address.path.clone(), destination, Some(address.into_remote(Side::Source, credential)))
+            }
+            (Endpoint::Local(source), Endpoint::Remote(address)) => (source, address.path.clone(), Some(address.into_remote(Side::Destination, credential))),
+            (Endpoint::Remote(_), Endpoint::Remote(_)) => bail!("origem e destino não podem ser ambos remotos"),
+        };
+        let mut job = Self::new(name, source, destination, mode);
+        job.remote = remote;
+        Ok(job)
+    }
+
+    pub fn is_local(&self, side: Side) -> bool {
+        self.remote.as_ref().is_none_or(|remote| remote.side != side)
+    }
+
+    pub fn source_label(&self) -> String {
+        self.label(Side::Source, &self.source)
+    }
+
+    pub fn destination_label(&self) -> String {
+        self.label(Side::Destination, &self.destination)
+    }
+
+    fn label(&self, side: Side, path: &Path) -> String {
+        match &self.remote {
+            Some(remote) if remote.side == side => remote.label(path),
+            _ => shorten_home(path),
+        }
+    }
+
+    pub fn source_arg(&self) -> OsString {
+        self.arg(Side::Source, &self.source)
+    }
+
+    pub fn destination_arg(&self) -> OsString {
+        self.arg(Side::Destination, &self.destination)
+    }
+
+    fn arg(&self, side: Side, path: &Path) -> OsString {
+        match &self.remote {
+            Some(remote) if remote.side == side => remote.spec(path),
+            _ => path.as_os_str().to_os_string(),
         }
     }
 
@@ -162,7 +222,11 @@ impl Job {
 
     pub fn validate(&self) -> Result<()> {
         validate_name(&self.name)?;
-        for (label, path) in [("origem", &self.source), ("destino", &self.destination)] {
+        for (side, label, path) in [(Side::Source, "origem", &self.source), (Side::Destination, "destino", &self.destination)] {
+            if let Some(remote) = self.remote.as_ref().filter(|remote| remote.side == side) {
+                remote.validate(path).with_context(|| format!("{label} remota inválida"))?;
+                continue;
+            }
             if !path.is_absolute() {
                 bail!("{label} precisa ser caminho absoluto: {}", path.display());
             }
@@ -170,8 +234,11 @@ impl Job {
                 bail!("{label} não pode conter '..': {}", path.display());
             }
         }
-        if self.source.starts_with(&self.destination) || self.destination.starts_with(&self.source) {
+        if self.remote.is_none() && (self.source.starts_with(&self.destination) || self.destination.starts_with(&self.source)) {
             bail!("origem e destino não podem ser iguais nem um dentro do outro");
+        }
+        if self.on_change && !self.is_local(Side::Source) {
+            bail!("'ao alterar' só funciona com origem local");
         }
         Ok(())
     }

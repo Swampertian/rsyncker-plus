@@ -9,6 +9,7 @@ pub enum Target {
     Field(usize),
     Submit,
     Cancel,
+    Discover,
     Confirm,
     Reject,
 }
