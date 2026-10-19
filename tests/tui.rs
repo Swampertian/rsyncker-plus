@@ -88,6 +88,38 @@ fn tab_wraps_around_fields() {
 }
 
 #[test]
+fn on_change_toggles_and_reaches_job() {
+    let mut form = JobForm::new();
+    form.source.set("/a");
+    form.destination.set("/b");
+    form.name.set("a");
+    assert!(!form.to_job().unwrap().on_change);
+    focus(&mut form, Field::OnChange);
+    form.on_key(key(KeyCode::Char(' ')));
+    assert!(form.to_job().unwrap().on_change);
+}
+
+#[test]
+fn editing_keeps_watch_timings() {
+    let mut job = Job::new("a", "/a".into(), "/b".into(), Mode::Copy);
+    job.on_change = true;
+    job.debounce_secs = 5;
+    let edited = JobForm::edit(&job).to_job().unwrap();
+    assert!(edited.on_change);
+    assert_eq!(edited.debounce_secs, 5);
+}
+
+#[test]
+fn trigger_label_combines_schedule_and_change() {
+    let mut job = Job::new("a", "/a".into(), "/b".into(), Mode::Copy);
+    assert_eq!(view::trigger_label(&job), "manual");
+    job.on_change = true;
+    assert_eq!(view::trigger_label(&job), "ao alterar");
+    job.schedule = Schedule::Daily;
+    assert_eq!(view::trigger_label(&job), "diário + alterar");
+}
+
+#[test]
 fn choices_cycle_with_arrows_and_space() {
     let mut form = JobForm::new();
     focus(&mut form, Field::Mode);

@@ -47,20 +47,23 @@ pub enum Command {
         /// Limite de banda em KB/s.
         #[arg(long)]
         bwlimit: Option<u32>,
+        /// Também roda quando algo muda na origem.
+        #[arg(long)]
+        on_change: bool,
     },
     /// Lista os jobs com último e próximo run.
     List,
-    /// Remove um job e seu timer.
+    /// Remove um job e suas units.
     Remove {
         /// Nome do job.
         job: String,
     },
-    /// Ativa o timer de um job.
+    /// Ativa os gatilhos de um job.
     Enable {
         /// Nome do job.
         job: String,
     },
-    /// Desativa o timer de um job.
+    /// Desativa os gatilhos de um job.
     Disable {
         /// Nome do job.
         job: String,

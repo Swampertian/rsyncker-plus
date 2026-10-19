@@ -8,13 +8,13 @@ use crate::paths::shorten_home;
 use crate::state;
 use crate::tui::app::{Action, Level, Message, Row};
 use crate::tui::mouse::{Hits, Target};
-use crate::tui::view::{format_bytes, key_hints, mode_label, schedule_label, short_next_run, status_label};
+use crate::tui::view::{format_bytes, key_hints, mode_label, short_next_run, status_label, trigger_label};
 
 pub fn render(frame: &mut Frame, rows: &[Row], table: &mut TableState, message: Option<&Message>, hits: &mut Hits) {
     let [header, body, details, status, footer] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(5), Constraint::Length(6), Constraint::Length(1), Constraint::Length(1)]).areas(frame.area());
 
-    frame.render_widget(Line::from(vec![" rsync-tui ".bold().black().on_cyan(), format!("  {} job(s)", rows.len()).dark_gray()]), header);
+    frame.render_widget(Line::from(vec![" S-insync ".bold().black().on_cyan(), format!("  {} job(s)", rows.len()).dark_gray()]), header);
 
     if rows.is_empty() {
         render_empty(frame, body);
@@ -68,7 +68,7 @@ fn render_table(frame: &mut Frame, area: Rect, rows: &[Row], table: &mut TableSt
         let (status_text, status_style) = status_label(row.status());
         let last = row.last_run.as_ref().map_or_else(|| "-".to_string(), |r| state::format_ago(r.finished_at, now));
         let (agenda, next) = if job.enabled {
-            (schedule_label(job.schedule).to_string(), row.next_run.as_deref().map_or_else(|| "-".to_string(), short_next_run))
+            (trigger_label(job), row.next_run.as_deref().map_or_else(|| "-".to_string(), short_next_run))
         } else {
             ("desativado".to_string(), "-".to_string())
         };
@@ -90,7 +90,7 @@ fn render_table(frame: &mut Frame, area: Rect, rows: &[Row], table: &mut TableSt
         Constraint::Length(14),
         Constraint::Length(16),
         Constraint::Length(8),
-        Constraint::Length(12),
+        Constraint::Length(21),
         Constraint::Length(11),
         Constraint::Length(17),
         Constraint::Min(20),

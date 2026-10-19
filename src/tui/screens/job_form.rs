@@ -19,11 +19,12 @@ pub enum Field {
     Name,
     Mode,
     Schedule,
+    OnChange,
     Excludes,
     Bwlimit,
 }
 
-pub const FIELDS: [Field; 7] = [Field::Source, Field::Destination, Field::Name, Field::Mode, Field::Schedule, Field::Excludes, Field::Bwlimit];
+pub const FIELDS: [Field; 8] = [Field::Source, Field::Destination, Field::Name, Field::Mode, Field::Schedule, Field::OnChange, Field::Excludes, Field::Bwlimit];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormEvent {
@@ -40,6 +41,7 @@ pub struct JobForm {
     pub name: TextInput,
     pub mode: Mode,
     pub schedule: Schedule,
+    pub on_change: bool,
     pub excludes: TextInput,
     pub bwlimit: TextInput,
     pub focus: usize,
@@ -56,6 +58,7 @@ impl JobForm {
             name: TextInput::default(),
             mode: Mode::Copy,
             schedule: Schedule::Daily,
+            on_change: false,
             excludes: TextInput::default(),
             bwlimit: TextInput::default(),
             focus: 0,
@@ -72,6 +75,7 @@ impl JobForm {
             name: TextInput::new(&job.name),
             mode: job.mode,
             schedule: job.schedule,
+            on_change: job.on_change,
             excludes: TextInput::new(&job.excludes.join(", ")),
             bwlimit: TextInput::new(&job.bwlimit_kbps.map(|v| v.to_string()).unwrap_or_default()),
             focus: 0,
@@ -105,7 +109,7 @@ impl JobForm {
         if index >= FIELDS.len() {
             return;
         }
-        if self.focus == index && matches!(self.focused(), Field::Mode | Field::Schedule) {
+        if self.focus == index && matches!(self.focused(), Field::Mode | Field::Schedule | Field::OnChange) {
             self.edit_field(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
         }
         self.focus = index;
@@ -132,7 +136,8 @@ impl JobForm {
                 let next = if forward { i + 1 } else { i + all.len() - 1 };
                 self.schedule = all[next % all.len()];
             }
-            Field::Mode | Field::Schedule => {}
+            Field::OnChange if forward || backward => self.on_change = !self.on_change,
+            Field::Mode | Field::Schedule | Field::OnChange => {}
             Field::Name if !self.is_new() => {}
             Field::Name => {
                 if self.name.handle(key) {
@@ -171,11 +176,15 @@ impl JobForm {
 
         let mut job = Job::new(name, expand_home(source), expand_home(destination), self.mode);
         job.schedule = self.schedule;
+        job.on_change = self.on_change;
         job.excludes = self.excludes.value().split(',').map(str::trim).filter(|p| !p.is_empty()).map(String::from).collect();
         let bwlimit = self.bwlimit.value().trim();
         job.bwlimit_kbps = if bwlimit.is_empty() { None } else { Some(bwlimit.parse().context("limite de banda deve ser um número (KB/s)")?) };
         if let Some(original) = &self.original {
             job.enabled = original.enabled;
+            job.debounce_secs = original.debounce_secs;
+            job.max_wait_secs = original.max_wait_secs;
+            job.cooldown_secs = original.cooldown_secs;
         }
         Ok(job)
     }
@@ -194,7 +203,7 @@ impl Default for JobForm {
 const LABEL_WIDTH: u16 = 14;
 
 pub fn render(frame: &mut Frame, form: &JobForm, hits: &mut Hits) {
-    let area = centered(frame.area(), 76, 19);
+    let area = centered(frame.area(), 76, 21);
     let title = if form.is_new() { " Novo job " } else { " Editar job " };
     let block = Block::bordered().title(title).border_style(Style::new().fg(Color::Cyan));
     let inner = block.inner(area);
@@ -212,6 +221,7 @@ pub fn render(frame: &mut Frame, form: &JobForm, hits: &mut Hits) {
         let value = match field {
             Field::Mode => choice(mode_label(form.mode), focused),
             Field::Schedule => choice(schedule_label(form.schedule), focused),
+            Field::OnChange => choice(if form.on_change { "sim" } else { "não" }, focused),
             _ => {
                 let input = input_of(form, *field);
                 let (visible, col) = input.window(value_width);
@@ -255,6 +265,7 @@ fn label_of(field: Field) -> &'static str {
         Field::Name => "Nome",
         Field::Mode => "Modo",
         Field::Schedule => "Agenda",
+        Field::OnChange => "Ao alterar",
         Field::Excludes => "Ignorar",
         Field::Bwlimit => "Banda (KB/s)",
     }
@@ -263,6 +274,7 @@ fn label_of(field: Field) -> &'static str {
 fn hint_of(field: Field) -> Option<&'static str> {
     match field {
         Field::Destination => Some("a pasta precisa existir"),
+        Field::OnChange => Some("roda sozinho quando algo muda na origem"),
         Field::Excludes => Some("separados por vírgula: .cache, *.tmp"),
         Field::Bwlimit => Some("vazio = sem limite"),
         _ => None,

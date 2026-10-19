@@ -3,7 +3,7 @@ use std::env;
 use anyhow::{Result, bail};
 use clap::Parser;
 use rsync_tui::cli::{Cli, Command};
-use rsync_tui::daemon::{runner, systemd};
+use rsync_tui::daemon::{runner, systemd, watch};
 use rsync_tui::job::{self, Job};
 use rsync_tui::manage;
 use rsync_tui::paths::Paths;
@@ -22,13 +22,14 @@ fn main() -> Result<()> {
                 bail!("job '{job}' falhou: {}", result.message.unwrap_or_default());
             }
         }
-        Some(Command::Watch { job }) => bail!("watch '{job}' ainda não implementado"),
-        Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit }) => {
+        Some(Command::Watch { job }) => watch::run(&paths, &job)?,
+        Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change }) => {
             let name = name.unwrap_or_else(|| job::name_from_path(&source));
             let mut new = Job::new(&name, source, to, mode);
             new.schedule = schedule;
             new.excludes = excludes;
             new.bwlimit_kbps = bwlimit;
+            new.on_change = on_change;
             let created = manage::add(&paths, new, &exe)?;
             println!("job '{}' criado: {} -> {}", created.name, created.source.display(), created.destination.display());
         }
@@ -64,10 +65,11 @@ fn print_list(paths: &Paths) -> Result<()> {
         };
         let next = if job.enabled { systemd::next_run(&job.name).unwrap_or_else(|| "-".to_string()) } else { "desativado".to_string() };
         println!(
-            "{}  [{:?}/{:?}]  {} -> {}\n    último: {}  próximo: {}",
+            "{}  [{:?}/{:?}{}]  {} -> {}\n    último: {}  próximo: {}",
             job.name,
             job.mode,
             job.schedule,
+            if job.on_change { "+alteração" } else { "" },
             job.source.display(),
             job.destination.display(),
             last,
