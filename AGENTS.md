@@ -3,11 +3,11 @@
 ## Isolation and collaboration
 
 - Use one Git worktree and one branch per task. Create them with
-  `script/worktree.sh create <agent> <task>`; branches use
+  `script/workflow/worktree.sh create <agent> <task>`; branches use
   `feat/<task>` and worktrees live under `.worktrees/<agent>-<task>/`.
 - Agents work only on their task branches. After committing the finished task
   and passing checks, the coordinator integrates it with
-  `script/worktree.sh integrate <agent> <task>` from the integration checkout.
+  `script/workflow/worktree.sh integrate <agent> <task>` from the integration checkout.
   This runs `script/check.sh`, merges the branch, and removes its worktree and
   branch on success. Git rejects overlapping local edits; unrelated edits in
   the integration checkout are preserved. Do not merge or modify the
@@ -25,7 +25,7 @@
   ```
 
 - Each `target/agent-*` directory can use about 10 GB. Remove your worktree with
-  `script/worktree.sh remove <agent> <task>` when finished; this also removes
+  `script/workflow/worktree.sh remove <agent> <task>` when finished; this also removes
   its local build artifacts. Never remove a target directory belonging to an
   active agent.
 - Commit completed work only to the task branch when requested by the
