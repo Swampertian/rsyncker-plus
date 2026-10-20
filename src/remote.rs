@@ -283,7 +283,7 @@ pub fn check_dir(remote: &Remote, path: &Path) -> Result<()> {
 pub fn explain(stderr: &str) -> Option<String> {
     let rules = [
         ("IDENTIFICATION HAS CHANGED", "ATENÇÃO: a chave do host mudou (servidor reinstalado ou possível ataque); verifique antes de confiar de novo"),
-        ("Host key verification failed", "chave do host desconhecida: abra a prévia (d) na TUI para confirmar ou rode `ssh <host>` uma vez"),
+        ("Host key verification failed", "chave do host desconhecida: confira e confirme com `rsync-tui trust-host <job>` ou pela prévia (d) na TUI"),
         ("Permission denied", "acesso negado pelo SSH: confira usuário e chave (sem senha ou carregada no ssh-agent)"),
         ("Could not resolve hostname", "host não encontrado na rede"),
         ("Connection refused", "conexão recusada: o serviço SSH/rsync está rodando no host?"),
