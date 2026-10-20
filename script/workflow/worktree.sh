@@ -4,10 +4,10 @@ set -eu
 usage() {
     printf '%s\n' \
         'Uso:' \
-        '  script/worktree.sh create <agente> <tarefa>' \
-        '  script/worktree.sh integrate <agente> <tarefa>' \
-        '  script/worktree.sh remove <agente> <tarefa>' \
-        '  script/worktree.sh list'
+        '  script/workflow/worktree.sh create <agente> <tarefa>' \
+        '  script/workflow/worktree.sh integrate <agente> <tarefa>' \
+        '  script/workflow/worktree.sh remove <agente> <tarefa>' \
+        '  script/workflow/worktree.sh list'
 }
 
 valid_name() {
