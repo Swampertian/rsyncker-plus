@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod commands;
 pub mod daemon;
 pub mod discover;
 pub mod hostkey;
@@ -6,6 +7,7 @@ pub mod job;
 pub mod manage;
 pub mod paths;
 pub mod remote;
+pub mod report;
 pub mod rsync;
 pub mod state;
 pub mod tui;

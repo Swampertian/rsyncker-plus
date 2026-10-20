@@ -8,8 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 
+use crate::job::Job;
 use crate::paths::expand_home;
-use crate::remote::{self, Remote};
+use crate::remote::{self, Protocol, Remote};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unknown {
@@ -50,6 +51,18 @@ pub fn check(remote: &Remote) -> Result<Option<Unknown>> {
         None => remote.host.clone(),
     };
     Ok(Some(Unknown { host, fingerprints: fingerprints?, entries, file: known_hosts_file(remote) }))
+}
+
+pub fn check_job(job: &Job) -> Result<Option<Unknown>> {
+    match job.remote.as_ref().filter(|remote| remote.protocol == Protocol::Ssh) {
+        Some(remote) => check(remote),
+        None => Ok(None),
+    }
+}
+
+pub fn matches(unknown: &Unknown, fingerprint: &str) -> bool {
+    let wanted = fingerprint.trim();
+    !wanted.is_empty() && unknown.fingerprints.iter().any(|known| known == wanted || known.split_whitespace().next() == Some(wanted))
 }
 
 pub fn trust(unknown: &Unknown) -> Result<()> {

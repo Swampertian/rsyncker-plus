@@ -21,15 +21,16 @@ fn no_subcommand_opens_tui() {
 #[test]
 fn run_reads_job_name() {
     let cli = parse(&["rsync-tui", "run", "fotos"]).unwrap();
-    assert!(matches!(cli.command, Some(Command::Run { job }) if job == "fotos"));
+    assert!(matches!(cli.command, Some(Command::Run { job, progress: false }) if job == "fotos"));
 }
 
 #[test]
 fn add_uses_defaults() {
     let cli = parse(&["rsync-tui", "add", "/a", "--to", "/b"]).unwrap();
-    let Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change, key }) = cli.command else {
+    let Some(Command::Add { source, to, mode, schedule, name, excludes, bwlimit, on_change, key, confirm }) = cli.command else {
         panic!("esperava Add");
     };
+    assert!(!confirm.dry_run && !confirm.yes);
     assert_eq!(source, "/a");
     assert_eq!(to, "/b");
     assert_eq!(mode, Mode::Copy);
@@ -94,4 +95,56 @@ fn invalid_mode_is_rejected() {
 #[test]
 fn unknown_subcommand_is_rejected() {
     assert!(parse(&["rsync-tui", "sync"]).is_err());
+}
+
+#[test]
+fn json_flag_works_before_or_after_subcommand() {
+    assert!(parse(&["rsync-tui", "list", "--json"]).unwrap().json);
+    assert!(parse(&["rsync-tui", "--json", "list"]).unwrap().json);
+    assert!(!parse(&["rsync-tui", "list"]).unwrap().json);
+}
+
+#[test]
+fn edit_reads_only_given_changes() {
+    let cli = parse(&["rsync-tui", "edit", "fotos", "--mode", "mirror", "--on-change", "false", "--bwlimit", "0", "--yes"]).unwrap();
+    let Some(Command::Edit { job, changes, confirm }) = cli.command else {
+        panic!("esperava Edit");
+    };
+    assert_eq!(job, "fotos");
+    assert_eq!(changes.mode, Some(Mode::Mirror));
+    assert_eq!(changes.on_change, Some(false));
+    assert_eq!(changes.bwlimit, Some(0));
+    assert!(changes.source.is_none() && changes.to.is_none() && changes.schedule.is_none() && changes.key.is_none());
+    assert!(confirm.yes && !confirm.dry_run);
+}
+
+#[test]
+fn edit_rejects_conflicting_options() {
+    assert!(parse(&["rsync-tui", "edit", "fotos", "--key", "/k", "--no-key"]).is_err());
+    assert!(parse(&["rsync-tui", "edit", "fotos", "--exclude", "*.tmp", "--clear-excludes"]).is_err());
+    assert!(parse(&["rsync-tui", "edit", "fotos", "--on-change", "talvez"]).is_err());
+}
+
+#[test]
+fn remove_needs_explicit_yes_flag() {
+    let cli = parse(&["rsync-tui", "remove", "fotos"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Remove { yes: false, .. })));
+    let cli = parse(&["rsync-tui", "remove", "fotos", "--yes"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Remove { yes: true, .. })));
+}
+
+#[test]
+fn add_accepts_dry_run() {
+    let cli = parse(&["rsync-tui", "add", "/a", "--to", "/b", "--dry-run"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Add { confirm, .. }) if confirm.dry_run));
+}
+
+#[test]
+fn new_commands_are_parsed() {
+    assert!(matches!(parse(&["rsync-tui", "preview", "fotos"]).unwrap().command, Some(Command::Preview { .. })));
+    assert!(matches!(parse(&["rsync-tui", "show", "fotos"]).unwrap().command, Some(Command::Show { .. })));
+    assert!(matches!(parse(&["rsync-tui", "discover"]).unwrap().command, Some(Command::Discover)));
+    assert!(matches!(parse(&["rsync-tui", "run", "fotos", "--progress"]).unwrap().command, Some(Command::Run { progress: true, .. })));
+    let cli = parse(&["rsync-tui", "trust-host", "nas:/backup", "--fingerprint", "SHA256:abc"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::TrustHost { target, fingerprint }) if target == "nas:/backup" && fingerprint.as_deref() == Some("SHA256:abc")));
 }

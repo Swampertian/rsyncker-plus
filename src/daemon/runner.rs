@@ -8,7 +8,7 @@ use fs2::FileExt;
 use crate::job::{Job, validate_name};
 use crate::paths::Paths;
 use crate::remote::{self, Side};
-use crate::rsync::{self, Options, Output};
+use crate::rsync::{self, Cancel, Options, Output};
 use crate::state::{self, Outcome, RunState};
 
 pub fn run(paths: &Paths, name: &str) -> Result<RunState> {
@@ -42,6 +42,14 @@ pub fn run_with(paths: &Paths, name: &str, opts: Options, execute: impl FnOnce(&
 
     state.save(&paths.state, name)?;
     Ok(state)
+}
+
+pub fn dry_run(mut job: Job, cancel: &Cancel, on_line: impl FnMut(&str)) -> Result<RunState> {
+    preflight(&mut job)?;
+    let started_at = state::now();
+    let args = rsync::build_args(&job, Options { dry_run: true, progress: false });
+    let output = rsync::execute_streaming(&args, cancel, on_line)?;
+    Ok(finish(started_at, &output))
 }
 
 pub fn finish(started_at: u64, output: &Output) -> RunState {
