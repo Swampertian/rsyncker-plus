@@ -27,7 +27,7 @@ pub fn watch_name(name: &str) -> String {
 pub fn service_template(exe: &Path) -> String {
     format!(
         "[Unit]\n\
-         Description=rsync-tui: %i\n\
+         Description=rsyncker-plus: %i\n\
          \n\
          [Service]\n\
          Type=oneshot\n\
@@ -41,7 +41,7 @@ pub fn service_template(exe: &Path) -> String {
 pub fn watch_template(exe: &Path) -> String {
     format!(
         "[Unit]\n\
-         Description=rsync-tui watch: %i\n\
+         Description=rsyncker-plus watch: %i\n\
          \n\
          [Service]\n\
          ExecStart={} watch %i\n\
@@ -71,7 +71,7 @@ pub fn timer_unit(job: &Job) -> Option<String> {
     let calendar = job.schedule.on_calendar()?;
     Some(format!(
         "[Unit]\n\
-         Description=rsync-tui: {name}\n\
+         Description=rsyncker-plus: {name}\n\
          \n\
          [Timer]\n\
          OnCalendar={calendar}\n\
