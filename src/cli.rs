@@ -15,7 +15,7 @@ Uso por scripts e agentes:
 
 /// Gerenciador de jobs rsync agendados.
 #[derive(Parser)]
-#[command(version, after_help = AUTOMATION_HELP)]
+#[command(version, about = "rsyncker-plus: sincronização com rsync via TUI e systemd", after_help = AUTOMATION_HELP)]
 pub struct Cli {
     /// Saída em JSON (para scripts e agentes).
     #[arg(long, global = true)]
